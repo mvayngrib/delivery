@@ -1,96 +1,95 @@
-
-var cyclist = require('cyclist');
-var util = require('util');
-var EventEmitter = require('events').EventEmitter;
+var cyclist = require('cyclist')
+var util = require('util')
+var EventEmitter = require('events').EventEmitter
 var debug = require('debug')('utp')
 var BitArray = require('./bit-array')
 var utils = require('./utils')
 
-var EXTENSION = 0;
-var VERSION   = 1;
-var UINT16    = 0xffff;
-var ID_MASK   = 0xf << 4;
-var MTU       = 1400;
+var EXTENSION    = 0
+var VERSION      = 1
+var UINT16       = 0xffff
+var ID_MASK      = 0xf << 4
+var MTU          = 1400
 
-var PACKET_DATA  = 0 << 4;
-var PACKET_FIN   = 1 << 4;
-var PACKET_STATE = 2 << 4;
-var PACKET_RESET = 3 << 4;
-var PACKET_SYN   = 4 << 4;
+var PACKET_DATA  = 0 << 4
+var PACKET_FIN   = 1 << 4
+var PACKET_STATE = 2 << 4
+var PACKET_RESET = 3 << 4
+var PACKET_SYN   = 4 << 4
 
-var MIN_PACKET_SIZE = 20;
-var DEFAULT_WINDOW_SIZE = 1 << 18;
-var CLOSE_GRACE = 3000;
-var KEEP_ALIVE_INTERVAL = 10*1000;
-var RESEND_INTERVAL = 500;
+var MIN_PACKET_SIZE     = 20
+var DEFAULT_WINDOW_SIZE = 1 << 18
+var CLOSE_GRACE         = 3000
+var KEEP_ALIVE_INTERVAL = 10 * 1000
+var RESEND_INTERVAL     = 500
 
-var BUFFER_SIZE = 512;
-var RECV_IDS = BitArray(UINT16);
+var BUFFER_SIZE         = 512
+var RECV_IDS = BitArray(UINT16)
 
-var uint32 = function(n) {
-  return n >>> 0;
-};
+var uint32 = function (n) {
+  return n >>> 0
+}
 
-var uint16 = function(n) {
-  return n & UINT16;
-};
+var uint16 = function (n) {
+  return n & UINT16
+}
 
 var hrtime = process.hrtime ?
   process.hrtime.bind(process) :
   require('browser-process-hrtime')
 
-var timestamp = function() {
-  var offset = hrtime();
-  var then = Date.now() * 1000;
+var timestamp = function () {
+  var offset = hrtime()
+  var then = Date.now() * 1000
 
-  return function() {
-    var diff = hrtime(offset);
-    return uint32(then + 1000000 * diff[0] + ((diff[1] / 1000) | 0));
-  };
-}();
+  return function () {
+    var diff = hrtime(offset)
+    return uint32(then + 1000000 * diff[0] + ((diff[1] / 1000) | 0))
+  }
+}()
 
-var bufferToPacket = function(buffer) {
-  var packet = {};
-  packet.id = buffer[0] & ID_MASK;
-  packet.connection = buffer.readUInt16BE(2);
-  packet.timestamp = buffer.readUInt32BE(4);
-  packet.timediff = buffer.readUInt32BE(8);
-  packet.window = buffer.readUInt32BE(12);
-  packet.seq = buffer.readUInt16BE(16);
-  packet.ack = buffer.readUInt16BE(18);
-  packet.data = buffer.length > 20 ? buffer.slice(20) : null;
-  return packet;
-};
-
-var packetToBuffer = function(packet) {
-  var buffer = new Buffer(20 + (packet.data ? packet.data.length : 0));
-  buffer[0] = packet.id | VERSION;
-  buffer[1] = EXTENSION;
-  buffer.writeUInt16BE(packet.connection, 2);
-  buffer.writeUInt32BE(packet.timestamp, 4);
-  buffer.writeUInt32BE(packet.timediff, 8);
-  buffer.writeUInt32BE(packet.window, 12);
-  buffer.writeUInt16BE(packet.seq, 16);
-  buffer.writeUInt16BE(packet.ack, 18);
-  if (packet.data) packet.data.copy(buffer, 20);
-  return buffer;
-};
-
-var packetType = function(packet) {
-  return packet.id === PACKET_DATA
-    ? 'data' : packet.id === PACKET_STATE
-    ? 'ack' : packet.id === PACKET_SYN
-    ? 'syn' : packet.id === PACKET_FIN
-    ? 'fin' : 'reset'
+var bufferToPacket = function (buffer) {
+  var packet = {}
+  packet.id = buffer[0] & ID_MASK
+  packet.connection = buffer.readUInt16BE(2)
+  packet.timestamp = buffer.readUInt32BE(4)
+  packet.timediff = buffer.readUInt32BE(8)
+  packet.window = buffer.readUInt32BE(12)
+  packet.seq = buffer.readUInt16BE(16)
+  packet.ack = buffer.readUInt16BE(18)
+  packet.data = buffer.length > 20 ? buffer.slice(20) : null
+  return packet
 }
 
-var stateName = function(state) {
+var packetToBuffer = function (packet) {
+  var buffer = new Buffer(20 + (packet.data ? packet.data.length : 0))
+  buffer[0] = packet.id | VERSION
+  buffer[1] = EXTENSION
+  buffer.writeUInt16BE(packet.connection, 2)
+  buffer.writeUInt32BE(packet.timestamp, 4)
+  buffer.writeUInt32BE(packet.timediff, 8)
+  buffer.writeUInt32BE(packet.window, 12)
+  buffer.writeUInt16BE(packet.seq, 16)
+  buffer.writeUInt16BE(packet.ack, 18)
+  if (packet.data) packet.data.copy(buffer, 20)
+  return buffer
+}
+
+var packetType = function (packet) {
+  return packet.id === PACKET_DATA
+    ? 'data' : packet.id === PACKET_STATE
+      ? 'ack' : packet.id === PACKET_SYN
+        ? 'syn' : packet.id === PACKET_FIN
+          ? 'fin' : 'reset'
+}
+
+var stateName = function (state) {
   for (var p in STATE) {
     if (state === STATE[p]) return p
   }
 }
 
-var createPacket = function(connection, id, data) {
+var createPacket = function (connection, id, data) {
   return {
     id: id,
     connection: id === PACKET_SYN ? connection._recvId : connection._sendId,
@@ -101,8 +100,8 @@ var createPacket = function(connection, id, data) {
     window: DEFAULT_WINDOW_SIZE,
     data: data,
     sent: 0
-  };
-};
+  }
+}
 
 var nonRepeatRandom = function () {
   var rand
@@ -115,8 +114,8 @@ var nonRepeatRandom = function () {
 }
 
 var CID = 0
-var Connection = function(options) {
-  var self = this;
+var Connection = function (options) {
+  var self = this
   options = options || {}
 
   this._maxPayloadSize = options.maxPayloadSize || MTU
@@ -129,17 +128,17 @@ var Connection = function(options) {
   this._id = CID++
   this._reset()
 
-  var resend = setInterval(this._resend.bind(this), resendInterval);
-  var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInteravl);
+  var resend = setInterval(this._resend.bind(this), resendInterval)
+  var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInteravl)
 
-  this.once('destroy', function() {
+  this.once('destroy', function () {
     this._debug('destroyed')
-    clearInterval(resend);
-    clearInterval(keepAlive);
-  });
-};
+    clearInterval(resend)
+    clearInterval(keepAlive)
+  })
+}
 
-util.inherits(Connection, EventEmitter);
+util.inherits(Connection, EventEmitter)
 
 Connection.prototype._onconnected = function () {
   this._connecting = false
@@ -169,7 +168,7 @@ Connection.prototype._debug = function () {
 //   }
 
 //   if (cb) this.once('timeout', cb)
-// };
+// }
 
 // Connection.prototype._clearIdleTimeout = function () {
 //   clearTimeout(this._idleTimeout)
@@ -203,7 +202,7 @@ Connection.prototype.destroy = function () {
 
   this._destroyed = true
   this.emit('destroy')
-};
+}
 
 Connection.prototype.send = function (data, ondelivered) {
   var self = this
@@ -235,85 +234,85 @@ Connection.prototype.send = function (data, ondelivered) {
   this._write(data)
 }
 
-Connection.prototype._write = function(data) {
+Connection.prototype._write = function (data) {
   var self = this
 
-  if (this._connecting) return this._writeOnce('connect', data);
+  if (this._connecting) return this._writeOnce('connect', data)
 
   while (this._writable()) {
-    var payload = this._payload(data);
+    var payload = this._payload(data)
 
     // this._debug('queueing data', payload.toString())
-    this._sendOutgoing(createPacket(this, PACKET_DATA, payload));
+    this._sendOutgoing(createPacket(this, PACKET_DATA, payload))
 
     if (payload.length === data.length) return
-    data = data.slice(payload.length);
+    data = data.slice(payload.length)
   }
 
-  this._writeOnce('flush', data);
-};
+  this._writeOnce('flush', data)
+}
 
-Connection.prototype._writeOnce = function(event, data) {
+Connection.prototype._writeOnce = function (event, data) {
   var numPackets = this._countRequiredPackets(data)
   this._backedUp += numPackets
 
   var once = function () {
     this._backedUp -= numPackets
-    this._write(data);
+    this._write(data)
   }
 
   var handlers = this._subscribedTo[event] = this._subscribedTo[event] || []
   handlers.push(once)
-  this.once(event, once);
-};
+  this.once(event, once)
+}
 
-Connection.prototype._writable = function() {
-  return this._inflightPackets < BUFFER_SIZE-1;
-};
+Connection.prototype._writable = function () {
+  return this._inflightPackets < BUFFER_SIZE - 1
+}
 
-Connection.prototype._payload = function(data) {
-  if (data.length > MTU) return data.slice(0, MTU);
-  return data;
-};
+Connection.prototype._payload = function (data) {
+  if (data.length > MTU) return data.slice(0, MTU)
+  return data
+}
 
 Connection.prototype._countRequiredPackets = function (data) {
   return Math.ceil(data.length / this._maxPayloadSize)
 }
 
-Connection.prototype._resend = function() {
-  var offset = this._seq - this._inflightPackets;
-  var first = this._outgoing.get(offset);
-  if (!first) return;
+Connection.prototype._resend = function () {
+  var offset = this._seq - this._inflightPackets
+  var first = this._outgoing.get(offset)
+  if (!first) return
 
-  var timeout = 500000;
-  var now = timestamp();
+  var timeout = 500000
+  var now = timestamp()
 
-  if (uint32(first.sent - now) < timeout) return;
+  if (uint32(first.sent - now) < timeout) return
 
   for (var i = 0; i < this._inflightPackets; i++) {
-    var packet = this._outgoing.get(offset+i);
+    var packet = this._outgoing.get(offset + i)
     this._debug('resending ' + packetType(packet))
-    if (uint32(packet.sent - now) >= timeout) this._transmit(packet);
+    if (uint32(packet.sent - now) >= timeout) this._transmit(packet)
   }
-};
+}
 
-Connection.prototype._keepAlive = function() {
-  if (this._alive) return this._alive = false;
-  this._sendAck();
-};
+Connection.prototype._keepAlive = function () {
+  if (this._alive) return this._alive = false
+  this._sendAck()
+}
 
-Connection.prototype._recvAck = function(ack) {
-  var offset = this._seq - this._inflightPackets;
-  var acked = uint16(ack - offset)+1;
+Connection.prototype._recvAck = function (ack) {
+  var offset = this._seq - this._inflightPackets
+  var acked = uint16(ack - offset) + 1
 
-  if (acked >= BUFFER_SIZE) return; // sanity check
+  if (acked >= BUFFER_SIZE) return // sanity check
 
   // this._debug(acked + ' packets acked')
   var callbacks = []
   // console.log(offset, this._deliveryCallbacks.values.filter(f => f))
   // console.log(this._deliveryCallbacks.get(offset))
   for (var i = 0; i < acked; i++) {
-    var seq = offset+i
+    var seq = offset + i
     var packet = this._outgoing.del(seq)
     var cb = this._deliveryCallbacks.del(seq)
     if (cb) callbacks.push(cb)
@@ -328,9 +327,9 @@ Connection.prototype._recvAck = function(ack) {
   })
 
   if (!this._inflightPackets) {
-    this.emit('flush');
+    this.emit('flush')
   }
-};
+}
 
 Connection.prototype._reset = function (resend) {
   var self = this
@@ -350,20 +349,20 @@ Connection.prototype._reset = function (resend) {
   this._subscribedTo = {}
   this._msgQueue = []
   this._deliveryCallbacks = cyclist(BUFFER_SIZE)
-  this._outgoing = cyclist(BUFFER_SIZE);
-  this._incoming = cyclist(BUFFER_SIZE);
+  this._outgoing = cyclist(BUFFER_SIZE)
+  this._incoming = cyclist(BUFFER_SIZE)
 
-  this._inflightPackets = 0;
-  this._alive = false;
+  this._inflightPackets = 0
+  this._alive = false
 
-  this._connecting = true;
+  this._connecting = true
   this._connId = null
-  this._recvId = null; // tmp value for v8 opt
-  this._sendId = null; // tmp value for v8 opt
-  this._ack = 0;
-  this._seq = (Math.random() * UINT16) | 0;
+  this._recvId = null // tmp value for v8 opt
+  this._sendId = null // tmp value for v8 opt
+  this._ack = 0
+  this._seq = (Math.random() * UINT16) | 0
   this._backedUp = 0
-  // this._synack = null;
+  // this._synack = null
 
   if (msgs) {
     msgs.forEach(function (args) {
@@ -399,7 +398,7 @@ Connection.prototype._finishConnecting = function (packet) {
     this._recvId = uint16(packet.connection + 1)
     this._sendId = packet.connection
     this._connId = this._sendId
-    this._ack = uint16(packet.seq);
+    this._ack = uint16(packet.seq)
     return this._sendAck()
   }
 
@@ -407,8 +406,8 @@ Connection.prototype._finishConnecting = function (packet) {
   if (packet.id === PACKET_STATE) {
     if (!isInitiator) return
 
-    this._ack = uint16(packet.seq-1);
-    this._recvAck(packet.ack);
+    this._ack = uint16(packet.seq - 1)
+    this._recvAck(packet.ack)
     return this._onconnected()
   }
 
@@ -422,7 +421,7 @@ Connection.prototype._finishConnecting = function (packet) {
   }
 }
 
-Connection.prototype.receive = function(buffer) {
+Connection.prototype.receive = function (buffer) {
   if (this._destroyed) {
     this._debug('cannot receive, am destroyed')
     return
@@ -439,7 +438,7 @@ Connection.prototype.receive = function(buffer) {
   if (packet.id === PACKET_RESET) {
     this._debug('resetting due to received RESET packet')
     return this._reset()
-    // return this.destroy()
+  // return this.destroy()
   }
 
   if (this._connecting) {
@@ -456,11 +455,11 @@ Connection.prototype.receive = function(buffer) {
       // ignore it
       return
 
-      // // we're on the same connection
-      // // ack the syn
-      // var ack = createPacket(this, PACKET_STATE, null)
-      // ack.ack = packet.seq
-      // return this._transmit(ack)
+    // // we're on the same connection
+    // // ack the syn
+    // var ack = createPacket(this, PACKET_STATE, null)
+    // ack.ack = packet.seq
+    // return this._transmit(ack)
     }
   }
 
@@ -469,13 +468,13 @@ Connection.prototype.receive = function(buffer) {
 
   if (uint16(packet.seq - this._ack) >= BUFFER_SIZE) {
     this._debug('acking old packet')
-    return this._sendAck(); // old packet
+    return this._sendAck() // old packet
   }
 
   this._incoming.put(packet.seq, packet)
 
-  while (packet = this._incoming.del(this._ack+1)) {
-    this._ack = uint16(this._ack+1);
+  while (packet = this._incoming.del(this._ack + 1)) {
+    this._ack = uint16(this._ack + 1)
 
     if (packet.id === PACKET_DATA) {
       this.emit('message', packet.data)
@@ -487,34 +486,34 @@ Connection.prototype.receive = function(buffer) {
   }
 
   this._sendAck()
-};
+}
 
-Connection.prototype._sendAck = function() {
+Connection.prototype._sendAck = function () {
   // this._debug('acking', this._seq, this._ack)
   this._transmit(createPacket(this, PACKET_STATE, null)); // TODO: make this delayed
-};
+}
 
-Connection.prototype._sendOutgoing = function(packet) {
-  this._outgoing.put(packet.seq, packet);
-  this._seq = uint16(this._seq + 1);
-  this._inflightPackets++;
-  this._transmit(packet);
-};
+Connection.prototype._sendOutgoing = function (packet) {
+  this._outgoing.put(packet.seq, packet)
+  this._seq = uint16(this._seq + 1)
+  this._inflightPackets++
+  this._transmit(packet)
+}
 
-Connection.prototype._cancelPacket = function(packet) {
+Connection.prototype._cancelPacket = function (packet) {
   var outgoing = this._outgoing.del(packet.seq)
   if (outgoing === packet) {
     this._inflightPackets--
   }
 }
 
-Connection.prototype._transmit = function(packet) {
-  packet.sent = packet.sent === 0 ? packet.timestamp : timestamp();
-  var message = packetToBuffer(packet);
-  this._alive = true;
+Connection.prototype._transmit = function (packet) {
+  packet.sent = packet.sent === 0 ? packet.timestamp : timestamp()
+  var message = packetToBuffer(packet)
+  this._alive = true
   this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
   this.emit('send', message)
-};
+}
 
 exports.packetToBuffer = packetToBuffer
 exports.bufferToPacket = bufferToPacket

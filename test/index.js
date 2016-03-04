@@ -1,14 +1,13 @@
-
 var test = require('tape')
 var Connection = require('../')
 var Messenger = require('../lptransport')
 var EVIL = [
-[ 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1 ]
-  // [ 0, 1, 0, 1, 1, 0, 1, 1 ]
-  // [],
-  // [ 1, 0 ],
-  // [ 1, 0, 0, 1, 1, 0, 0],
-  // [ 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1 ]
+  [ 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1 ]
+// [ 0, 1, 0, 1, 1, 0, 1, 1 ]
+// [],
+// [ 1, 0 ],
+// [ 1, 0, 0, 1, 1, 0, 0],
+// [ 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1 ]
 ]
 
 test('basic', function (t) {
@@ -79,7 +78,7 @@ test('basic', function (t) {
     if (--togo === 0) {
       a.destroy()
       b.destroy()
-      // console.log('bools:', bools)
+    // console.log('bools:', bools)
     }
   }
 })
@@ -140,7 +139,7 @@ test('length-prefixed transport', function (t) {
     if (--togo === 0) {
       m.destroy()
       n.destroy()
-      // console.log('bools:', bools)
+    // console.log('bools:', bools)
     }
   }
 })
