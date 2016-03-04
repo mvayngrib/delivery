@@ -4,6 +4,7 @@ var util = require('util');
 var EventEmitter = require('events').EventEmitter;
 var debug = require('debug')('utp')
 var BitArray = require('./bit-array')
+var utils = require('./utils')
 
 var EXTENSION = 0;
 var VERSION   = 1;
@@ -21,12 +22,10 @@ var MIN_PACKET_SIZE = 20;
 var DEFAULT_WINDOW_SIZE = 1 << 18;
 var CLOSE_GRACE = 3000;
 var KEEP_ALIVE_INTERVAL = 10*1000;
-var RESEND_INTERVAL = 100;
+var RESEND_INTERVAL = 500;
 
 var BUFFER_SIZE = 512;
 var RECV_IDS = BitArray(UINT16);
-
-var noop = function () {}
 
 var uint32 = function(n) {
   return n >>> 0;
@@ -220,28 +219,19 @@ Connection.prototype.send = function (data, ondelivered) {
 
   if (this._destroyed) throw new Error('this instance has been destroyed!')
 
-  if (!Buffer.isBuffer(data)) {
-    if (typeof data === 'object') {
-      data = JSON.stringify(data)
-    }
-
-    if (typeof data === 'string') {
-      data = new Buffer(data)
-    } else {
-      throw new Error('expected plain javascript object, Buffer, or string')
-    }
-  }
-
+  data = utils.toBuffer(data)
   var packetsToGo = this._countRequiredPackets(data)
 
   this._msgQueue.push([data, ondelivered]) // normalized args
+
   // register callback for ack for last piece
-  this._deliveryCallbacks.put(uint16(this._seq + packetsToGo), function () {
+  var ackIdx = this._seq + packetsToGo + this._backedUp - 1
+  // this._debug('scheduling callback for ack of ' + ackIdx)//(ackIdx & BUFFER_SIZE))
+  this._deliveryCallbacks.put(ackIdx, function () {
     var args = self._msgQueue.shift()
     if (args[1]) args[1]()
   })
 
-  this._debug('queueing', data.toString())
   this._write(data)
 }
 
@@ -264,7 +254,11 @@ Connection.prototype._write = function(data) {
 };
 
 Connection.prototype._writeOnce = function(event, data) {
+  var numPackets = this._countRequiredPackets(data)
+  this._backedUp += numPackets
+
   var once = function () {
+    this._backedUp -= numPackets
     this._write(data);
   }
 
@@ -283,7 +277,7 @@ Connection.prototype._payload = function(data) {
 };
 
 Connection.prototype._countRequiredPackets = function (data) {
-  return data.length / this._maxPayloadSize | 0
+  return Math.ceil(data.length / this._maxPayloadSize)
 }
 
 Connection.prototype._resend = function() {
@@ -314,8 +308,10 @@ Connection.prototype._recvAck = function(ack) {
 
   if (acked >= BUFFER_SIZE) return; // sanity check
 
-  this._debug(acked + ' packets acked')
+  // this._debug(acked + ' packets acked')
   var callbacks = []
+  // console.log(offset, this._deliveryCallbacks.values.filter(f => f))
+  // console.log(this._deliveryCallbacks.get(offset))
   for (var i = 0; i < acked; i++) {
     var seq = offset+i
     var packet = this._outgoing.del(seq)
@@ -366,6 +362,7 @@ Connection.prototype._reset = function (resend) {
   this._sendId = null; // tmp value for v8 opt
   this._ack = 0;
   this._seq = (Math.random() * UINT16) | 0;
+  this._backedUp = 0
   // this._synack = null;
 
   if (msgs) {
@@ -467,6 +464,7 @@ Connection.prototype.receive = function(buffer) {
     }
   }
 
+  this._recvAck(packet.ack)
   if (packet.id === PACKET_STATE) return
 
   if (uint16(packet.seq - this._ack) >= BUFFER_SIZE) {

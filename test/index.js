@@ -1,6 +1,7 @@
 
 var test = require('tape')
-var Deliverer = require('../')
+var Connection = require('../')
+var Messenger = require('../lptransport')
 var EVIL = [
 [ 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1 ]
   // [ 0, 1, 0, 1, 1, 0, 1, 1 ]
@@ -11,79 +12,135 @@ var EVIL = [
 ]
 
 test('basic', function (t) {
-  t.plan(2)
-
-  // var prev = 0
-  var mathRandom = Math.random
-  // Math.random = function() {
-  //   prev += 0.001
-  //   return prev
-  // }
-
-  var a = new Deliverer()
+  var a = new Connection()
   a._id = 'a'
-  var b = new Deliverer()
+  var b = new Connection()
   b._id = 'b'
 
-  var bools = []
+  // var bools = []
   // var bools = EVIL[0]
 
   connect(a, b, function () {
     // var r = bools.length ? bools.shift() : 1
-    var r = mathRandom() < 0.1 ? 1 : 0
-    bools.push(r)
+    var r = Math.random() < 0.3 ? 1 : 0 // drop some packets
+    // bools.push(r)
     return r
   })
 
-  var aToB = ['hey']
-  var bToA = ['ho']
+  var aToB = ['hey', 'ho']
+  var bToA = ['who', 'you', 'calling', 'ho?']
+  var togo = 2 * (aToB.length + bToA.length) // 2-way ticket for each message
+  t.plan(togo)
+
   aToB.forEach(msg => {
     a.send(msg, () => {
-      console.log('a delivered')
+      t.pass('a delivered')
+      finish()
     })
   })
 
   process.nextTick(function () {
     bToA.forEach(msg => {
       b.send(msg, () => {
-        console.log('b delivered')
+        t.pass('b delivered')
+        finish()
       })
     })
   })
 
-  var togo = 2
   a.on('message', msg => {
     msg = msg.toString()
-    console.log('a received ' + msg)
+    // console.log('a received ' + msg)
     t.deepEqual(msg, bToA.shift())
     finish()
   })
 
   b.on('message', msg => {
     msg = msg.toString()
-    console.log('b received ' + msg)
+    // console.log('b received ' + msg)
     t.deepEqual(msg, aToB.shift())
     finish()
   })
 
-  a.on('connect', () => console.log('a connected'))
-  b.on('connect', () => console.log('b connected'))
+  // a.on('connect', () => console.log('a connected'))
+  // b.on('connect', () => console.log('b connected'))
 
-  process.on('SIGTERM', function () {
-    console.log(bools)
-    process.exit(1)
-  })
+  // process.on('SIGTERM', function () {
+  //   console.log(bools)
+  //   process.exit(1)
+  // })
 
-  process.on('SIGINT', function () {
-    console.log(bools)
-    process.exit(1)
-  })
+  // process.on('SIGINT', function () {
+  //   console.log(bools)
+  //   process.exit(1)
+  // })
 
   function finish () {
     if (--togo === 0) {
       a.destroy()
       b.destroy()
-      console.log('bools:', bools)
+      // console.log('bools:', bools)
+    }
+  }
+})
+
+test('length-prefixed transport', function (t) {
+  var a = new Connection()
+  a._id = 'a'
+  var b = new Connection()
+  b._id = 'b'
+
+  var m = new Messenger({ connection: a })
+  var n = new Messenger({ connection: b })
+
+  var mToN = ['hey'.repeat(1000), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
+  var nToM = ['ho'.repeat(1000), '我饿了'.repeat(3232)]
+  // var bools = []
+  var togo = 2 * (mToN.length + nToM.length)
+
+  connect(a, b, function () {
+    var r = Math.random() < 0.3 ? 1 : 0 // drop some packets
+    // bools.push(r)
+    return r
+  })
+
+  t.plan(togo)
+
+  mToN.forEach(msg => {
+    m.send(msg, () => {
+      t.pass('m delivered')
+      finish()
+    })
+  })
+
+  process.nextTick(function () {
+    nToM.forEach(msg => {
+      n.send(msg, () => {
+        t.pass('n delivered')
+        finish()
+      })
+    })
+  })
+
+  m.on('message', msg => {
+    msg = msg.toString()
+    // console.log('m received ' + msg)
+    t.deepEqual(msg, nToM.shift())
+    finish()
+  })
+
+  n.on('message', msg => {
+    msg = msg.toString()
+    // console.log('n received ' + msg)
+    t.deepEqual(msg, mToN.shift())
+    finish()
+  })
+
+  function finish () {
+    if (--togo === 0) {
+      m.destroy()
+      n.destroy()
+      // console.log('bools:', bools)
     }
   }
 })
