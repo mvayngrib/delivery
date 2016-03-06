@@ -2,7 +2,7 @@ exports.toBuffer = function toBuffer (data) {
   if (Buffer.isBuffer(data)) return data
 
   if (typeof data === 'object') {
-    return JSON.stringify(data)
+    data = JSON.stringify(data)
   }
 
   if (typeof data === 'string') {

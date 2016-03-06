@@ -1,6 +1,6 @@
 var test = require('tape')
-var Connection = require('../')
-var Messenger = require('../lptransport')
+var Connection = require('../connection')
+var Messenger = require('../')
 var EVIL = [
   [ 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1 ]
 // [ 0, 1, 0, 1, 1, 0, 1, 1 ]
@@ -47,14 +47,14 @@ test('basic', function (t) {
     })
   })
 
-  a.on('message', msg => {
+  a.on('receive', msg => {
     msg = msg.toString()
     // console.log('a received ' + msg)
     t.deepEqual(msg, bToA.shift())
     finish()
   })
 
-  b.on('message', msg => {
+  b.on('receive', msg => {
     msg = msg.toString()
     // console.log('b received ' + msg)
     t.deepEqual(msg, aToB.shift())
@@ -97,7 +97,7 @@ test('length-prefixed transport', function (t) {
   // var bools = []
   var togo = 2 * (mToN.length + nToM.length)
 
-  connect(a, b, function () {
+  connect(m, n, function () {
     var r = Math.random() < 0.3 ? 1 : 0 // drop some packets
     // bools.push(r)
     return r
