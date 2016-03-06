@@ -11,6 +11,9 @@ var EVIL = [
 ]
 
 test('basic', function (t) {
+  console.log('this tests recovery when more than half the packets\n' +
+    'are dropped so give it ~30 seconds to complete')
+
   var a = new Connection()
   a._id = 'a'
   var b = new Connection()
