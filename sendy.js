@@ -20,7 +20,7 @@ function LengthPrefixed (opts) {
   })
 
   this._queued = 0
-  this._deliveryCallbacks = {}
+  this._deliveryCallbacks = []
 
   this._connection.on('send', function (msg) {
     self.emit('send', msg)
@@ -34,11 +34,6 @@ function LengthPrefixed (opts) {
   this._decoder.on('data', function (data) {
     self.emit('message', data)
   })
-
-  var id = 0
-  this._nextCallbackId = function () {
-    return '' + (id++ & UINT32)
-  }
 }
 
 util.inherits(LengthPrefixed, EventEmitter)
@@ -52,10 +47,10 @@ LengthPrefixed.prototype.send = function (msg, cb) {
   var self = this
 
   if (cb) {
-    this._deliveryCallbacks[this._nextCallbackId()] = {
+    this._deliveryCallbacks.push({
       count: ++this._queued,
       callback: cb
-    }
+    })
   }
 
   var data = utils.toBuffer(msg)
@@ -64,13 +59,16 @@ LengthPrefixed.prototype.send = function (msg, cb) {
 
   this._connection.send(Buffer.concat([length, data], totalLength), function () {
     self._queued--
-    for (var id in self._deliveryCallbacks) {
-      var waiter = self._deliveryCallbacks[id]
-      if (--waiter.count === 0) {
-        delete self._deliveryCallbacks[id]
-        waiter.callback()
+    self._deliveryCallbacks = self._deliveryCallbacks.filter(function (item) {
+      if (--item.count === 0) {
+        var cb = item.callback
+        if (cb) cb()
+
+        return
       }
-    }
+
+      return true
+    })
   })
 }
 
