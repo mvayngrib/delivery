@@ -22,7 +22,7 @@ test('basic', function (t) {
   // var bools = []
   // var bools = EVIL[0]
 
-  connect(a, b, function () {
+  createBadConnection(a, b, function () {
     // var r = bools.length ? bools.shift() : 1
     var r = Math.random() < 0.3 ? 1 : 0 // drop some packets
     // bools.push(r)
@@ -92,16 +92,16 @@ test('length-prefixed transport', function (t) {
   var b = new Connection()
   b._id = 'b'
 
-  var m = new Messenger({ connection: a })
-  var n = new Messenger({ connection: b })
+  var m = new Messenger({ client: a })
+  var n = new Messenger({ client: b })
 
   var mToN = ['hey'.repeat(1000), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
   var nToM = ['ho'.repeat(1000), '我饿了'.repeat(3232)]
   // var bools = []
   var togo = 2 * (mToN.length + nToM.length)
 
-  connect(m, n, function () {
-    var r = Math.random() < 0.3 ? 1 : 0 // drop some packets
+  createBadConnection(m, n, function () {
+    var r = Math.random() < 0.9 ? 1 : 0 // drop some packets
     // bools.push(r)
     return r
   })
@@ -147,7 +147,7 @@ test('length-prefixed transport', function (t) {
   }
 })
 
-function connect (a, b, filter) {
+function createBadConnection (a, b, filter) {
   ;[a, b].forEach(me => {
     other = me === a ? b : a
     other.on('send', msg => {

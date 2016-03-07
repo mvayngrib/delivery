@@ -13,18 +13,19 @@ function LengthPrefixed (opts) {
 
   EventEmitter.call(this)
 
-  this._connection = opts.connection || new Connection(opts)
-  utils.connect(this, this._connection)
-  this._connection.once('destroy', function () {
+  this._client = opts.client || new Connection(opts)
+  utils.connect(this, this._client)
+
+  this._client.once('destroy', function () {
     self._destroyed = true
-    self._connection = null
+    self._client = null
   })
 
   this._queued = 0
   this._deliveryCallbacks = []
 
   this._decoder = lps.decode()
-  this._connection.on('receive', function (lengthPrefixedData) {
+  this._client.on('receive', function (lengthPrefixedData) {
     self._decoder.write(lengthPrefixedData)
   })
 
@@ -50,7 +51,7 @@ LengthPrefixed.prototype.send = function (msg, cb) {
   var length = new Buffer(varint.encode(data.length))
   var totalLength = data.length + length.length
 
-  this._connection.send(Buffer.concat([length, data], totalLength), function () {
+  this._client.send(Buffer.concat([length, data], totalLength), function () {
     self._queued--
     self._deliveryCallbacks = self._deliveryCallbacks.filter(function (item) {
       if (--item.count === 0) {
@@ -66,10 +67,10 @@ LengthPrefixed.prototype.send = function (msg, cb) {
 }
 
 LengthPrefixed.prototype.destroy = function () {
-  if (this._connection) {
-    this._connection.destroy()
+  if (this._client) {
+    this._client.destroy()
     // nulled in 'destroy' handler too
     // but this prevents subsequent destroy calls
-    this._connection = null
+    this._client = null
   }
 }
