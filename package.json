@@ -1,7 +1,7 @@
 {
   "name": "sendy",
   "version": "1.0.0",
-  "description": "UTP without the sockets or streams",
+  "description": "symmetric network-agnostic UTP",
   "main": "index.js",
   "scripts": {
     "test": "node test"
