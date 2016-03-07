@@ -14,6 +14,7 @@ function LengthPrefixed (opts) {
   EventEmitter.call(this)
 
   this._connection = opts.connection || new Connection(opts)
+  utils.connect(this, this._connection)
   this._connection.once('destroy', function () {
     self._destroyed = true
     self._connection = null
@@ -21,10 +22,6 @@ function LengthPrefixed (opts) {
 
   this._queued = 0
   this._deliveryCallbacks = []
-
-  this._connection.on('send', function (msg) {
-    self.emit('send', msg)
-  })
 
   this._decoder = lps.decode()
   this._connection.on('receive', function (lengthPrefixedData) {
@@ -38,10 +35,6 @@ function LengthPrefixed (opts) {
 
 util.inherits(LengthPrefixed, EventEmitter)
 exports = module.exports = LengthPrefixed
-
-LengthPrefixed.prototype.receive = function (data) {
-  this._connection.receive(data)
-}
 
 LengthPrefixed.prototype.send = function (msg, cb) {
   var self = this
