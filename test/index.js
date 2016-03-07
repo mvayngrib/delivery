@@ -124,14 +124,14 @@ test('length-prefixed transport', function (t) {
     })
   })
 
-  m.on('message', msg => {
+  m.on('receive', msg => {
     msg = msg.toString()
     // console.log('m received ' + msg)
     t.deepEqual(msg, nToM.shift())
     finish()
   })
 
-  n.on('message', msg => {
+  n.on('receive', msg => {
     msg = msg.toString()
     // console.log('n received ' + msg)
     t.deepEqual(msg, mToN.shift())

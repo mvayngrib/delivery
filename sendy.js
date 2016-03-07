@@ -32,7 +32,7 @@ function LengthPrefixed (opts) {
   })
 
   this._decoder.on('data', function (data) {
-    self.emit('message', data)
+    self.emit('receive', data)
   })
 }
 

@@ -118,9 +118,9 @@ var Connection = function (options) {
   var self = this
   options = options || {}
 
-  this._maxPayloadSize = options.maxPayloadSize || MTU
+  this._mtu = options.mtu || MTU
   var resendInterval = options.resendInterval || RESEND_INTERVAL
-  var keepAliveInteravl = options.keepAliveInteravl || KEEP_ALIVE_INTERVAL
+  var keepAliveInterval = options.keepAliveInterval || KEEP_ALIVE_INTERVAL
 
   EventEmitter.call(this)
 
@@ -129,7 +129,7 @@ var Connection = function (options) {
   this._reset()
 
   var resend = setInterval(this._resend.bind(this), resendInterval)
-  var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInteravl)
+  var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInterval)
 
   this.once('destroy', function () {
     this._debug('destroyed')
@@ -272,12 +272,12 @@ Connection.prototype._writable = function () {
 }
 
 Connection.prototype._payload = function (data) {
-  if (data.length > MTU) return data.slice(0, MTU)
+  if (data.length > this._mtu) return data.slice(0, this._mtu)
   return data
 }
 
 Connection.prototype._countRequiredPackets = function (data) {
-  return Math.ceil(data.length / this._maxPayloadSize)
+  return Math.ceil(data.length / this._mtu)
 }
 
 Connection.prototype._resend = function () {
