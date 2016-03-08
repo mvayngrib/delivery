@@ -204,19 +204,20 @@ Connection.prototype.destroy = function () {
   this.emit('destroy')
 }
 
+Connection.prototype._sendSyn = function () {
+  if (this._syn) return this._transmit(this._syn)
+
+  this._recvId = nonRepeatRandom()
+  this._sendId = uint16(this._recvId + 1)
+  this._connId = this._recvId
+  this._syn = createPacket(this, PACKET_SYN, null)
+  this._sendOutgoing(this._syn)
+}
+
 Connection.prototype.send = function (data, ondelivered) {
   var self = this
   if (this._destroyed) return
-
-  if (!this._recvId) {
-    this._recvId = nonRepeatRandom()
-    this._sendId = uint16(this._recvId + 1)
-    this._connId = this._recvId
-    this._syn = createPacket(this, PACKET_SYN, null)
-    this._sendOutgoing(this._syn)
-  }
-
-  if (this._destroyed) throw new Error('this instance has been destroyed!')
+  if (!this._recvId) this._sendSyn()
 
   data = utils.toBuffer(data)
   var packetsToGo = this._countRequiredPackets(data)
@@ -292,7 +293,7 @@ Connection.prototype._resend = function () {
 
   for (var i = 0; i < this._inflightPackets; i++) {
     var packet = this._outgoing.get(offset + i)
-    this._debug('resending ' + packetType(packet))
+    // this._debug('resending ' + packetType(packet))
     if (uint32(packet.sent - now) >= timeout) this._transmit(packet)
   }
 }
@@ -316,16 +317,16 @@ Connection.prototype._recvAck = function (ack) {
     var seq = offset + i
     var packet = this._outgoing.del(seq)
     var cb = this._deliveryCallbacks.del(seq)
-    if (cb) callbacks.push(cb)
+    if (cb) {
+      try {
+        cb()
+      } catch (err) {
+        this._debug('callback failed', err)
+      }
+    }
 
     this._inflightPackets--
   }
-
-  process.nextTick(function () {
-    callbacks.forEach(function (cb) {
-      cb()
-    })
-  })
 
   if (!this._inflightPackets) {
     this.emit('flush')
@@ -335,6 +336,7 @@ Connection.prototype._recvAck = function (ack) {
 Connection.prototype._reset = function (resend) {
   var self = this
 
+  this._debug('reset, resend: ' + (!!resend))
   if (this._msgQueue) {
     for (var e in this._subscribedTo) {
       for (var i = 0; i < this._subscribedTo[e].length; i++) {
@@ -343,6 +345,7 @@ Connection.prototype._reset = function (resend) {
     }
 
     this._debug('resetting')
+    this.emit('reset')
   }
 
   var msgs = resend && this._msgQueue && this._msgQueue.slice()
@@ -363,6 +366,7 @@ Connection.prototype._reset = function (resend) {
   this._sendId = null // tmp value for v8 opt
   this._ack = 0
   this._seq = (Math.random() * UINT16) | 0
+  this._syn = null
   this._backedUp = 0
   // this._synack = null
 
@@ -402,6 +406,14 @@ Connection.prototype._finishConnecting = function (packet) {
     this._connId = this._sendId
     this._ack = uint16(packet.seq)
     return this._sendAck()
+  }
+
+  if (!this._recvId) {
+    this._debug('got bullied')
+    this._recvId = uint16(packet.connection + 1)
+    this._sendId = packet.connection
+    this._connId = this._sendId
+    this._ack = uint16(packet.seq)
   }
 
   var isInitiator = this._sendId > this._recvId
