@@ -10,68 +10,87 @@ var EVIL = [
 // [ 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1 ]
 ]
 
-// test.only('disconnect', function (t) {
-//   var a = new Connection()
-//   a._id = 'a'
-//   var b = new Connection()
-//   b._id = 'b'
+test('disconnect', function (t) {
+  var random = Math.random
+  var i = 0
+  Math.random = function () {
+    return (++i) * 100 / 0xffff
+  }
 
-//   createFaultyConnection(a, b, function () {
-//     // good connection
-//     return true
-//   })
+  var a = new Connection()
+  a._id = 'a'
+  var b = new Connection()
+  b._id = 'b'
 
-//   var aToB = ['hey', 'ho']
-//   var bToA = ['who', 'you', 'calling', 'ho?']
-//   var togo = 2 * (aToB.length + bToA.length) // 2-way ticket for each message
-//   t.plan(togo)
+  createFaultyConnection(a, b, function () {
+    // good connection
+    return true
+  })
 
-//   // a.send(aToB[0])
-//   aToB.forEach(msg => {
-//     a.send(msg, () => {
-//       t.pass('a delivered')
-//       finish()
-//     })
-//   })
+  var aToB = ['hey', 'ho', 'merry', 'christmas']
+  var bToA = ['who', 'you', 'calling', 'ho?']
+  var togo = 2 * (aToB.length + bToA.length) // 2-way ticket for each message
+  t.plan(togo)
 
-//   process.nextTick(function () {
-//     bToA.forEach(msg => {
-//       b.send(msg, () => {
-//         t.pass('b delivered')
-//         finish()
-//       })
-//     })
-//   })
+  var aReceived = {}
+  var bReceived = {}
 
-//   a.on('receive', msg => {
-//     msg = msg.toString()
-//     // console.log('a received ' + msg)
-//     t.deepEqual(msg, bToA.shift())
-//     finish()
-//   })
+  aToB.forEach(msg => {
+    a.send(msg, () => {
+      t.pass('a delivered')
+      finish()
+    })
+  })
 
-//   var disconnected
-//   b.on('receive', msg => {
-//     msg = msg.toString()
-//     // console.log('b received ' + msg)
-//     t.deepEqual(msg, aToB.shift())
-//     finish()
-//     if (disconnected) return
+  process.nextTick(function () {
+    bToA.forEach(msg => {
+      b.send(msg, () => {
+        t.pass('b delivered')
+        finish()
+      })
+    })
+  })
 
-//     // t.pass('a delivered')
-//     // finish()
-//     disconnected = true
-//     a._reset(true)
-//   })
+  a.on('receive', msg => {
+    msg = msg.toString()
+    console.log('a received ' + msg)
+    if (!aReceived[msg]) {
+      aReceived[msg] = true
+      finish()
+    }
+  })
 
-//   function finish () {
-//     if (--togo === 0) {
-//       a.destroy()
-//       b.destroy()
-//     // console.log('bools:', bools)
-//     }
-//   }
-// })
+  var disconnected
+  b.on('receive', msg => {
+    msg = msg.toString()
+    console.log('b received ' + msg)
+    if (!bReceived[msg]) {
+      bReceived[msg] = true
+      finish()
+    }
+
+    if (disconnected) return
+
+    disconnected = true
+    a._reset(true)
+  })
+
+  function finish () {
+    if (--togo === 0) {
+      aToB.forEach(msg => {
+        t.equal(bReceived[msg], true)
+      })
+
+      bToA.forEach(msg => {
+        t.equal(aReceived[msg], true)
+      })
+
+      a.destroy()
+      b.destroy()
+    // console.log('bools:', bools)
+    }
+  }
+})
 
 test('basic', function (t) {
   console.log('this tests recovery when more than half the packets\n' +
@@ -296,7 +315,7 @@ function createFaultyConnection (a, b, filter) {
     other.on('send', msg => {
       if (filter(msg)) {
         process.nextTick(() => {
-          if (!me.isPaused()) {
+          if (!(me.isPaused && me.isPaused())) {
             me.receive(msg)
           }
         })

@@ -12,6 +12,7 @@
     "cyclist": "^1.0.1",
     "debug": "^2.2.0",
     "length-prefixed-stream": "^1.4.0",
+    "re-emitter": "^1.1.2",
     "varint": "^4.0.0",
     "xtend": "^4.0.1"
   },

@@ -1,3 +1,4 @@
+var reemit = require('re-emitter')
 var slice = Array.prototype.slice
 
 exports.toBuffer = function toBuffer (data) {
@@ -19,15 +20,13 @@ exports.connect = function connect (/* pipeline */) {
   var rest = slice.call(arguments, 1)
   rest.reduce(function (prev, next) {
     // bubble 'send' event
-    next.on('send', function (msg) {
-      var args = slice.call(arguments)
-      args.unshift('send')
-      prev.emit.apply(prev, args)
-    })
-
+    reemit(next, prev, ['send', 'pause', 'resume'])
     prev.receive = function () {
       // -> forward receive call
       return next.receive.apply(next, arguments)
     }
+
+    if (!prev.pause) prev.pause = next.pause
+    if (!prev.resume) prev.resume = next.resume
   }, top)
 }
