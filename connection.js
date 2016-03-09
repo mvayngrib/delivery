@@ -151,30 +151,30 @@ Connection.prototype._debug = function () {
   return debug(args.join(' '))
 }
 
-// Connection.prototype.setTimeout = function(millis, cb) {
-//   var self = this
+Connection.prototype.setTimeout = function(millis, cb) {
+  var self = this
 
-//   this._clearIdleTimeout()
-//   if (!millis) return
+  this.clearTimeout()
+  if (!millis) return
 
-//   this._idleTimeoutMillis = millis
-//   this._idleTimeout = setTimeout(function () {
-//     self._clearIdleTimeout()
-//     self.emit('timeout', millis)
-//   }, millis)
+  this._idleTimeoutMillis = millis
+  this._idleTimeout = setTimeout(function () {
+    self.clearTimeout()
+    self.emit('timeout', millis)
+  }, millis)
 
-//   if (this._idleTimeout.unref) {
-//     this._idleTimeout.unref()
-//   }
+  if (this._idleTimeout.unref) {
+    this._idleTimeout.unref()
+  }
 
-//   if (cb) this.once('timeout', cb)
-// }
+  if (cb) this.once('timeout', cb)
+}
 
-// Connection.prototype._clearIdleTimeout = function () {
-//   clearTimeout(this._idleTimeout)
-//   delete this._idleTimeout
-//   delete this._idleTimeoutMillis
-// }
+Connection.prototype.clearTimeout = function () {
+  clearTimeout(this._idleTimeout)
+  delete this._idleTimeout
+  delete this._idleTimeoutMillis
+}
 
 // Connection.prototype.close = function (cb) {
 //   // close nicely
@@ -282,6 +282,8 @@ Connection.prototype._countRequiredPackets = function (data) {
 }
 
 Connection.prototype._resend = function () {
+  if (this._paused) return
+
   var offset = this._seq - this._inflightPackets
   var first = this._outgoing.get(offset)
   if (!first) return
@@ -409,11 +411,13 @@ Connection.prototype._finishConnecting = function (packet) {
   }
 
   if (!this._recvId) {
-    this._debug('got bullied')
-    this._recvId = uint16(packet.connection + 1)
-    this._sendId = packet.connection
-    this._connId = this._sendId
-    this._ack = uint16(packet.seq)
+    // e.g. connection was lost, then regained with new Connection instance
+    return this._sendSyn()
+    // this._debug('got bullied')
+    // this._recvId = uint16(packet.connection + 1)
+    // this._sendId = packet.connection
+    // this._connId = this._sendId
+    // this._ack = uint16(packet.seq)
   }
 
   var isInitiator = this._sendId > this._recvId
@@ -440,6 +444,9 @@ Connection.prototype.receive = function (buffer) {
     this._debug('cannot receive, am destroyed')
     return
   }
+
+  // we might be paused
+  this.resume()
 
   var packet = bufferToPacket(buffer)
   this._debug('connected: ' + (!this._connecting) + '\n    received: ' + packetType(packet) + '\n    with seq: ' + packet.seq + '\n    and ack: ' + packet.ack)
@@ -539,6 +546,10 @@ Connection.prototype.resume = function () {
   if (!this._paused) return
   this._paused = false
   this.emit('resume')
+}
+
+Connection.prototype.isPaused = function () {
+  return this._paused
 }
 
 exports.packetToBuffer = packetToBuffer
