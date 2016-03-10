@@ -72,5 +72,6 @@ LengthPrefixed.prototype.destroy = function () {
     // nulled in 'destroy' handler too
     // but this prevents subsequent destroy calls
     this._client = null
+    this.emit('destroy')
   }
 }
