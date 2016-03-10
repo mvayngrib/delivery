@@ -365,7 +365,7 @@ Connection.prototype._reset = function (resend) {
     if (!resend) {
       var err = new Error('connection was reset')
       this._deliveryCallbacks.values.forEach(function (item) {
-        if (item.callback) {
+        if (item && item.callback) {
           item.callback(err)
         }
       })
