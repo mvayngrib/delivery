@@ -1,4 +1,6 @@
+var EventEmitter = require('events').EventEmitter
 var test = require('tape')
+var Switchboard = require('../switchboard')
 var Connection = require('../connection')
 var Messenger = require('../')
 var EVIL = [
@@ -307,6 +309,74 @@ test('pause/resume', function (t) {
     // console.log('bools:', bools)
     }
   }
+})
+
+test('switchboard', function (t) {
+  t.timeoutAfter(5000)
+  var names = ['a', 'b', 'c']
+  var blocked = {}
+  var unreliables = names.map(function (name) {
+    // these are 100% reliable, but that's not what we're testing here
+    var ee = new EventEmitter()
+    ee.name = name
+    ee.destroy = function () {}
+    ee.send = function (msg) {
+      if (blocked[name]) return
+
+      var to = unreliables.filter(function (u) {
+        return u.name === msg.to
+      })[0]
+
+      process.nextTick(function () {
+        to.emit('receive', msg)
+      })
+    }
+
+    return ee
+  })
+
+  var msgs = ['hey', 'ho']
+  var switchboards = names.map(function (name, i) {
+    var s = new Switchboard({
+      unreliable: unreliables[i],
+      encode: function (msg, to) {
+        return {
+          data: msg,
+          from: name,
+          to: to
+        }
+      }
+    })
+
+    s.on('message', function (msg, from) {
+      msg = msg.toString()
+
+      t.equal(msg, 'hey!')
+      t.equal(from, names[0])
+
+      blocked[from] = true
+    })
+
+    return s
+  })
+
+  switchboards[0].send(names[1], 'hey!', function () {
+    switchboards[0].send(names[1], 'ho!', function (err) {
+      t.ok(err)
+    })
+
+    setTimeout(function () {
+      blocked = {}
+      switchboards[0].cancelPending()
+      setTimeout(function () {
+        switchboards.forEach(function (s) {
+          s.destroy()
+        })
+
+        t.end()
+      }, 1000)
+    }, 1000)
+  })
 })
 
 function createFaultyConnection (a, b, filter) {
