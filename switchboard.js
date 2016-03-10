@@ -37,6 +37,7 @@ function Switchboard (opts) {
     msg = self._decode(msg)
     var rclient = self._getReliableClientFor(msg.from)
     if (rclient) {
+      // self.emit('receiving', msg)
       rclient.receive(msg.data)
     }
   })
@@ -71,7 +72,8 @@ proto.cancelPending = function (recipient) {
   var err = new Error('canceled')
   for (var id in this._queued) {
     if (!recipient || id === recipient) {
-      var queue = this._queued[id]
+      var queue = this._queued[id].slice()
+      delete this._queued[id]
       for (var i = 0; i < queue.length; i++) {
         queue[i][1](err)
       }
