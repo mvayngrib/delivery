@@ -2,6 +2,7 @@ var EventEmitter = require('events').EventEmitter
 var util = require('util')
 var varint = require('varint')
 var lps = require('length-prefixed-stream')
+var debug = require('debug')('sendy')
 var utils = require('./utils')
 var Connection = require('./connection')
 var UINT32 = 0xffffffff
@@ -24,14 +25,29 @@ function LengthPrefixed (opts) {
   this._queued = 0
   this._deliveryCallbacks = []
 
-  this._decoder = lps.decode()
+  this._client.on('reset', function () {
+    debug('reset length-prefixed decoder')
+    setDecoder()
+  })
+
   this._client.on('receive', function (lengthPrefixedData) {
     self._decoder.write(lengthPrefixedData)
   })
 
-  this._decoder.on('data', function (data) {
+  setDecoder()
+
+  function setDecoder () {
+    if (self._decoder) {
+      self._decoder.removeListener('data', onDecoded)
+    }
+
+    self._decoder = lps.decode()
+    self._decoder.on('data', onDecoded)
+  }
+
+  function onDecoded (data) {
     self.emit('receive', data)
-  })
+  }
 }
 
 util.inherits(LengthPrefixed, EventEmitter)
