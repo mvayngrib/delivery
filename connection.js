@@ -138,6 +138,7 @@ var Connection = function (options) {
   })
 }
 
+Connection.MTU = MTU
 util.inherits(Connection, EventEmitter)
 
 Connection.prototype._onconnected = function () {
@@ -349,7 +350,6 @@ Connection.prototype._reset = function (resend) {
     }
 
     this._debug('resetting')
-    this.emit('reset')
 
     if (!resend) {
       var err = new Error('connection was reset')
@@ -359,6 +359,8 @@ Connection.prototype._reset = function (resend) {
         }
       })
     }
+
+    this.emit('reset')
   }
 
   var msgs = resend && this._msgQueue && this._msgQueue.slice()
@@ -378,6 +380,7 @@ Connection.prototype._reset = function (resend) {
   this._recvId = null // tmp value for v8 opt
   this._sendId = null // tmp value for v8 opt
   this._ack = 0
+  this._old = 0 // num old packets received in a row
   this._seq = (Math.random() * UINT16) | 0
   this._syn = null
   this._backedUp = 0
@@ -421,17 +424,6 @@ Connection.prototype._finishConnecting = function (packet) {
     return this._sendAck()
   }
 
-  // if (!this._recvId) {
-  //   // e.g. connection was lost, then regained with new Connection instance
-  //   this._debug('got bullied')
-  //   return this._sendSyn()
-  //   // this._debug('got bullied')
-  //   // this._recvId = uint16(packet.connection + 1)
-  //   // this._sendId = packet.connection
-  //   // this._connId = this._sendId
-  //   // this._ack = uint16(packet.seq)
-  // }
-
   var isInitiator = this._sendId > this._recvId
   if (packet.id === PACKET_STATE) {
     if (!isInitiator) return
@@ -469,7 +461,7 @@ Connection.prototype.receive = function (buffer) {
   this.resume()
 
   var packet = Buffer.isBuffer(buffer) ? bufferToPacket(buffer) : buffer
-  this._debug('connected: ' + (!this._connecting) + '\n    received: ' + packetType(packet) + '\n    with seq: ' + packet.seq + '\n    and ack: ' + packet.ack)
+  // this._debug('connected: ' + (!this._connecting) + '\n    received: ' + packetType(packet) + '\n    with seq: ' + packet.seq + '\n    and ack: ' + packet.ack)
 
   this._lastReceivedTimestamp = Date.now()
   if ('_idleTimeout' in this) {
@@ -490,12 +482,12 @@ Connection.prototype.receive = function (buffer) {
   if (packet.id === PACKET_SYN) {
     if (packet.connection !== this._connId) {
       this._debug('resetting due to new SYN received')
-      var queued = this._msgQueue.slice()
-      this._reset()
-      this.receive(packet)
-      return queued.forEach(function (args) {
-        self.send.apply(self, args)
-      })
+      // var queued = this._msgQueue.slice()
+      this._reset(true)
+      return this.receive(packet)
+      // return queued.forEach(function (args) {
+      //   self.send.apply(self, args)
+      // })
     } else {
       // ignore it
       return
@@ -512,11 +504,16 @@ Connection.prototype.receive = function (buffer) {
   if (packet.id === PACKET_STATE) return
 
   if (uint16(packet.seq - this._ack) >= BUFFER_SIZE) {
-    this._debug('got old packet, resetting connection just in case')
-    // return this._sendAck() // old packet
-    return this._reset(true)
+    if (++this._old > 10) {
+      this._debug('getting old packets, resetting connection')
+  //     return this._sendAck() // old packet
+      this._reset(true)
+    }
+
+    return
   }
 
+  this._old = 0
   this._incoming.put(packet.seq, packet)
 
   while (packet = this._incoming.del(this._ack + 1)) {
@@ -547,8 +544,9 @@ Connection.prototype._sendOutgoing = function (packet) {
 }
 
 Connection.prototype._cancelPacket = function (packet) {
-  var outgoing = this._outgoing.del(packet.seq)
+  var outgoing = this._outgoing.get(packet.seq)
   if (outgoing === packet) {
+    this._outgoing.del(packet.seq)
     this._inflightPackets--
   }
 }
