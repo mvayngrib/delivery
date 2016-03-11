@@ -136,17 +136,6 @@ var Connection = function (options) {
     clearInterval(resend)
     clearInterval(keepAlive)
   })
-
-  var ack
-  Object.defineProperty(this, '_ack', {
-    get: function () {
-      return ack
-    },
-    set: function (val) {
-      ack = val
-      return ack
-    }
-  })
 }
 
 util.inherits(Connection, EventEmitter)
@@ -456,11 +445,15 @@ Connection.prototype._finishConnecting = function (packet) {
   }
 
   if (packet.id === PACKET_DATA) {
-//     this._incoming.put(packet.seq, packet)
+    // this._incoming.put(packet.seq, packet)
     // wait for PACKET_STATE
     if (isInitiator) return
 
-    this._recvAck(packet.ack)
+    // this._recvAck(packet.ack)
+    if (this._ack === 0) {
+      this._ack = packet.seq - 1
+    }
+
     return this._onconnected()
   }
 }
