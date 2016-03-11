@@ -3,6 +3,7 @@ var util = require('util')
 var EventEmitter = require('events').EventEmitter
 var typeforce = require('typeforce')
 var extend = require('xtend/mutable')
+var debug = require('debug')('sendy-switchboard')
 var Sendy = require('./sendy')
 var nochange = function (data) {
   return data
@@ -37,7 +38,7 @@ function Switchboard (opts) {
     msg = self._decode(msg)
     var rclient = self._getReliableClientFor(msg.from)
     if (rclient) {
-      // self.emit('receiving', msg)
+      self.emit('receiving', msg)
       rclient.receive(msg.data)
     }
   })
@@ -48,6 +49,7 @@ exports = module.exports = Switchboard
 var proto = Switchboard.prototype
 
 proto.send = function (recipient, msg, ondelivered) {
+  debug('queueing msg to ' + recipient)
   var rclient = this._getReliableClientFor(recipient)
   if (!rclient) return
 
@@ -70,14 +72,8 @@ proto.send = function (recipient, msg, ondelivered) {
 
 proto.cancelPending = function (recipient) {
   var err = new Error('canceled')
-  for (var id in this._queued) {
+  for (var id in this._rclients) {
     if (!recipient || id === recipient) {
-      var queue = this._queued[id].slice()
-      delete this._queued[id]
-      for (var i = 0; i < queue.length; i++) {
-        queue[i][1](err)
-      }
-
       this._rclients[id].destroy()
     }
   }
@@ -93,6 +89,7 @@ proto._getReliableClientFor = function (recipient) {
 
   rclient.on('receive', function (msg) {
     // emit message from whoever `recipient` is
+    debug('msg from ' + recipient + ', length: ' + msg.length)
     self.emit('message', msg, recipient)
   })
 
@@ -103,6 +100,13 @@ proto._getReliableClientFor = function (recipient) {
 
   rclient.on('destroy', function () {
     delete self._rclients[recipient]
+    var queue = self._queued[recipient]
+    if (!queue) return
+
+    delete self._queued[recipient]
+    for (var i = 0; i < queue.length; i++) {
+      queue[i][1](err)
+    }
   })
 
   return rclient
