@@ -103,6 +103,7 @@ proto._getReliableClientFor = function (recipient) {
     var queue = self._queued[recipient]
     if (!queue) return
 
+    var err = new Error('connection destroyed')
     delete self._queued[recipient]
     for (var i = 0; i < queue.length; i++) {
       queue[i][1](err)
