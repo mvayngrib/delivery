@@ -55,7 +55,7 @@ test('disconnect', function (t) {
 
   a.on('receive', msg => {
     msg = msg.toString()
-    console.log('a received ' + msg)
+    // console.log('a received ' + msg)
     if (!aReceived[msg]) {
       aReceived[msg] = true
       finish()
@@ -65,7 +65,7 @@ test('disconnect', function (t) {
   var disconnected
   b.on('receive', msg => {
     msg = msg.toString()
-    console.log('b received ' + msg)
+    // console.log('b received ' + msg)
     if (!bReceived[msg]) {
       bReceived[msg] = true
       finish()
@@ -185,7 +185,7 @@ test('length-prefixed transport', function (t) {
   var togo = 2 * (mToN.length + nToM.length)
 
   createFaultyConnection(m, n, function () {
-    var r = Math.random() < 0.9 ? 1 : 0 // drop some packets
+    var r = Math.random() < 0.5 ? 1 : 0 // drop some packets
     // bools.push(r)
     return r
   })
