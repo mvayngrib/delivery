@@ -1,6 +1,6 @@
 {
   "name": "sendy",
-  "version": "1.2.4",
+  "version": "1.3.0",
   "description": "symmetric network-agnostic UTP",
   "main": "index.js",
   "scripts": {
