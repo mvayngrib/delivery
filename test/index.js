@@ -15,9 +15,6 @@ var EVIL = [
 test('disconnect', function (t) {
   var random = Math.random
   var i = 0
-  Math.random = function () {
-    return (++i) * 100 / 0xffff
-  }
 
   var a = new Connection()
   a._id = 'a'
