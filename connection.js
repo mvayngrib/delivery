@@ -389,6 +389,7 @@ Connection.prototype._reset = function (resend) {
   this._old = 0 // num old packets received in a row
   this._seq = (Math.random() * UINT16) | 0
   this._syn = null
+  this._theirSyn = null
   this._backedUp = 0
   // this._synack = null
 
@@ -405,17 +406,21 @@ Connection.prototype._millisSinceLastReceived = function () {
 
 Connection.prototype._finishConnecting = function (packet) {
   if (packet.id === PACKET_SYN) {
+    if (this._theirSyn && this._theirSyn.connection === packet.connection) {
+      return this._sendAck()
+    }
+
     // our conn id should win
     // ignore their syn and keep resending ours
-    if (this._connId > packet.connection) {
+    if (this._recvId > packet.connection) {
       this._debug('our conn wins')
       return
     }
 
-    if (this._connId === packet.connection) {
-      // this._debug('resetting due to connection id collision')
-      // this._reset(true)
-      this._sendAck()
+    if (this._recvId === packet.connection) {
+      this._debug('resetting due to connection id collision')
+      this._reset(true)
+      // this._sendAck()
       return
     }
 
@@ -429,7 +434,19 @@ Connection.prototype._finishConnecting = function (packet) {
     this._sendId = packet.connection
     this._connId = this._sendId
     this._ack = uint16(packet.seq)
+    this._theirSyn = packet
+    this._syn = null
     return this._sendAck()
+  }
+
+  if (!this._recvId) {
+    this._debug('expected SYN, got ' + packetType(packet) + ', sending own SYN')
+    return this._sendSyn()
+  }
+
+  if (!this._isPacketForThisConnection(packet)) {
+    this._debug('1. ignoring ' + packetType(packet) + ' with a different connection id', this._recvId, packet.connection)
+    return
   }
 
   var isInitiator = this._sendId > this._recvId
@@ -456,6 +473,14 @@ Connection.prototype._finishConnecting = function (packet) {
 
     return this._onconnected()
   }
+}
+
+Connection.prototype._isPacketForThisConnection = function (packet) {
+  if (packet.id === PACKET_SYN) {
+    return this._theirSyn && packet.connection === this._theirSyn.connection
+  }
+
+  return packet.connection === this._recvId
 }
 
 Connection.prototype.receive = function (buffer) {
@@ -506,6 +531,11 @@ Connection.prototype.receive = function (buffer) {
     // ack.ack = packet.seq
     // return this._transmit(ack)
     }
+  }
+
+  if (!this._isPacketForThisConnection(packet)) {
+    this._debug('2. ignoring ' + packetType(packet) + ' with a different connection id')
+    return
   }
 
   this._recvAck(packet.ack)
@@ -563,7 +593,7 @@ Connection.prototype._transmit = function (packet) {
   packet.sent = packet.sent === 0 ? packet.timestamp : timestamp()
   var message = packetToBuffer(packet)
   this._alive = true
-  // this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
+  this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
   this.emit('send', message)
 }
 

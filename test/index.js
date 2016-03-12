@@ -168,20 +168,22 @@ test('basic', function (t) {
 })
 
 test('length-prefixed transport', function (t) {
-  var a = new Connection()
-  a._id = 'a'
-  var b = new Connection()
-  b._id = 'b'
+  t.timeoutAfter(30000)
 
-  var m = new Messenger({ client: a })
-  var n = new Messenger({ client: b })
+  var ac = new Connection()
+  ac._id = 'a'
+  var bc = new Connection()
+  bc._id = 'b'
 
-  var mToN = ['hey'.repeat(1000), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
-  var nToM = ['ho'.repeat(1000), '我饿了'.repeat(3232)]
+  var a = new Messenger({ client: ac })
+  var b = new Messenger({ client: bc })
+
+  var aToB = ['hey'.repeat(1000), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
+  var bToA = ['ho'.repeat(1000), '我饿了'.repeat(3232)]
   // var bools = []
-  var togo = 2 * (mToN.length + nToM.length)
+  var togo = 2 * (aToB.length + bToA.length)
 
-  createFaultyConnection(m, n, function () {
+  createFaultyConnection(ac, bc, function () {
     var r = Math.random() < 0.5 ? 1 : 0 // drop some packets
     // bools.push(r)
     return r
@@ -189,40 +191,42 @@ test('length-prefixed transport', function (t) {
 
   t.plan(togo)
 
-  mToN.forEach(msg => {
-    m.send(msg, () => {
-      t.pass('m delivered')
+  aToB.forEach(msg => {
+    a.send(msg, () => {
+      t.pass('a delivered ' + abbr(msg))
       finish()
     })
   })
 
   process.nextTick(function () {
-    nToM.forEach(msg => {
-      n.send(msg, () => {
-        t.pass('n delivered')
+    bToA.forEach(msg => {
+      b.send(msg, () => {
+        t.pass('b delivered ' + abbr(msg))
         finish()
       })
     })
   })
 
-  m.on('receive', msg => {
+  // var aRecvIdx = 0
+  // var bRecvIdx = 0
+  a.on('receive', msg => {
     msg = msg.toString()
-    // console.log('m received ' + msg)
-    t.deepEqual(msg, nToM.shift())
+    console.log('a received ' + abbr(msg))
+    t.deepEqual(msg, bToA.shift())
     finish()
   })
 
-  n.on('receive', msg => {
+  b.on('receive', msg => {
     msg = msg.toString()
-    // console.log('n received ' + msg)
-    t.deepEqual(msg, mToN.shift())
+    console.log('b received ' + abbr(msg))
+    t.deepEqual(msg, aToB.shift())
     finish()
   })
 
   function finish () {
     if (--togo === 0) {
-      m.destroy()
-      n.destroy()
+      a.destroy()
+      b.destroy()
     // console.log('bools:', bools)
     }
   }
@@ -391,4 +395,8 @@ function createFaultyConnection (a, b, filter) {
       }
     })
   })
+}
+
+function abbr (msg) {
+  return msg.slice(0, 10) + '...'
 }
