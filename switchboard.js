@@ -21,7 +21,8 @@ function Switchboard (opts) {
     unreliable: 'Object',
     clientForRecipient: '?Function',
     encode: '?Function',
-    decode: '?Function'
+    decode: '?Function',
+    sendTimeout: '?Number'
   }, opts)
 
   EventEmitter.call(this)
@@ -32,6 +33,7 @@ function Switchboard (opts) {
   this._clientForRecipient = opts.clientForRecipient || DEFAULT_CLIENT_MAKER
   this._rclients = {}
   this._queued = {}
+  this._sendTimeout = opts.sendTimeout
 
   this._uclient = opts.unreliable
   this._uclient.on('receive', function (msg) {
@@ -64,6 +66,8 @@ exports = module.exports = Switchboard
 var proto = Switchboard.prototype
 
 proto.send = function (recipient, msg, ondelivered) {
+  var self = this
+
   debug('queueing msg to ' + recipient)
   var rclient = this._getReliableClientFor(recipient)
   if (!rclient) return
@@ -72,7 +76,9 @@ proto.send = function (recipient, msg, ondelivered) {
   if (!queue) queue = this._queued[recipient] = []
 
   var done
+  var timeout
   var cbWrapper = function (err) {
+    clearTimeout(timeout)
     if (done) return
 
     done = true
@@ -83,6 +89,11 @@ proto.send = function (recipient, msg, ondelivered) {
 
   queue.push([msg, cbWrapper])
   rclient.send(msg, cbWrapper)
+  if (!this._sendTimeout) return
+
+  timeout = setTimeout(function () {
+    cbWrapper(new Error('timed out'))
+  }, self._sendTimeout)
 }
 
 proto.cancelPending = function (recipient) {
