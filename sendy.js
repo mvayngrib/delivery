@@ -54,6 +54,8 @@ LengthPrefixed.prototype._onDecoded = function (data) {
 }
 
 LengthPrefixed.prototype.reset = function () {
+  if (this._destroyed) return
+
   this._queued = 0
   this._deliveryCallbacks = []
   this._resetDecoder()
