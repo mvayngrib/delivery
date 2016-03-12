@@ -22,36 +22,43 @@ function LengthPrefixed (opts) {
     self._client = null
   })
 
-  this._queued = 0
-  this._deliveryCallbacks = []
-
   this._client.on('reset', function () {
     debug('reset length-prefixed decoder')
-    setDecoder()
+    self._resetDecoder()
   })
 
   this._client.on('receive', function (lengthPrefixedData) {
     self._decoder.write(lengthPrefixedData)
   })
 
-  setDecoder()
-
-  function setDecoder () {
-    if (self._decoder) {
-      self._decoder.removeListener('data', onDecoded)
-    }
-
-    self._decoder = lps.decode()
-    self._decoder.on('data', onDecoded)
-  }
-
-  function onDecoded (data) {
-    self.emit('receive', data)
-  }
+  this._onDecoded = this._onDecoded.bind(this)
+  this._queued = 0
+  this._deliveryCallbacks = []
+  this._resetDecoder()
 }
 
 util.inherits(LengthPrefixed, EventEmitter)
 exports = module.exports = LengthPrefixed
+
+LengthPrefixed.prototype._resetDecoder = function () {
+  if (this._decoder) {
+    this._decoder.removeListener('data', this._onDecoded)
+  }
+
+  this._decoder = lps.decode()
+  this._decoder.on('data', this._onDecoded)
+}
+
+LengthPrefixed.prototype._onDecoded = function (data) {
+  this.emit('receive', data)
+}
+
+LengthPrefixed.prototype.reset = function () {
+  this._queued = 0
+  this._deliveryCallbacks = []
+  this._resetDecoder()
+  this._client.reset()
+}
 
 LengthPrefixed.prototype.send = function (msg, cb) {
   var self = this
