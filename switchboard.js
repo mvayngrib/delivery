@@ -38,8 +38,23 @@ function Switchboard (opts) {
     msg = self._decode(msg)
     var rclient = self._getReliableClientFor(msg.from)
     if (rclient) {
+      // debug('received msg from ' + msg.from + ', length: ' + msg.data.length)
       self.emit('receiving', msg)
       rclient.receive(msg.data)
+    }
+  })
+
+  this._uclient.on('disconnect', function () {
+    for (var id in self._rclients) {
+      var rclient = self._rclients[id]
+      if (rclient.pause) rclient.pause()
+    }
+  })
+
+  this._uclient.on('connect', function () {
+    for (var id in self._rclients) {
+      var rclient = self._rclients[id]
+      if (rclient.resume) rclient.resume()
     }
   })
 }
@@ -79,6 +94,12 @@ proto.cancelPending = function (recipient) {
   }
 }
 
+proto.clients = function () {
+  return Object.keys(this._rclients).map(function (k) {
+    return this._rclients[k]
+  }, this)
+}
+
 proto._getReliableClientFor = function (recipient) {
   var self = this
   var rclient = this._rclients[recipient]
@@ -89,11 +110,12 @@ proto._getReliableClientFor = function (recipient) {
 
   rclient.on('receive', function (msg) {
     // emit message from whoever `recipient` is
-    debug('msg from ' + recipient + ', length: ' + msg.length)
+    // debug('bubbling received msg from ' + recipient + ', length: ' + msg.length)
     self.emit('message', msg, recipient)
   })
 
   rclient.on('send', function (msg) {
+    // debug('sending msg to ' + recipient + ', length: ' + msg.length)
     msg = self._encode(msg, recipient)
     self._uclient.send(msg)
   })
@@ -106,6 +128,7 @@ proto._getReliableClientFor = function (recipient) {
     var err = new Error('connection destroyed')
     delete self._queued[recipient]
     for (var i = 0; i < queue.length; i++) {
+      debugger
       queue[i][1](err)
     }
   })
