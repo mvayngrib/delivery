@@ -1,7 +1,7 @@
 var cyclist = require('cyclist')
 var util = require('util')
 var EventEmitter = require('events').EventEmitter
-var debug = require('debug')('utp')
+var debug = require('debug')('sendy-connection')
 var BitArray = require('./bit-array')
 var utils = require('./utils')
 
@@ -21,7 +21,7 @@ var MIN_PACKET_SIZE     = 20
 var DEFAULT_WINDOW_SIZE = 1 << 18
 var CLOSE_GRACE         = 3000
 var KEEP_ALIVE_INTERVAL = 10 * 1000
-var RESEND_INTERVAL     = 500
+var RESEND_INTERVAL     = 1000
 
 var BUFFER_SIZE         = 512
 var RECV_IDS = BitArray(UINT16)
@@ -132,7 +132,7 @@ var Connection = function (options) {
   var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInterval)
 
   this.once('destroy', function () {
-    this._debug('destroyed')
+    self._debug('destroyed')
     clearInterval(resend)
     clearInterval(keepAlive)
   })
@@ -285,7 +285,7 @@ Connection.prototype._countRequiredPackets = function (data) {
 }
 
 Connection.prototype._resend = function () {
-  if (this._paused) return
+  if (this._paused || !this._inflightPackets) return
 
   var offset = this._seq - this._inflightPackets
   var first = this._outgoing.get(offset)
@@ -330,12 +330,27 @@ Connection.prototype._recvAck = function (ack) {
       }
     }
 
-    this._inflightPackets--
+    if (packet) {
+      this._inflightPackets--
+    }
   }
 
   if (!this._inflightPackets) {
     this.emit('flush')
   }
+}
+
+Connection.prototype.reset = function () {
+  this._reset() // don't resend
+}
+
+Connection.prototype.cancelPending = function () {
+  var err = new Error('connection was reset')
+  this._deliveryCallbacks.values.forEach(function (item) {
+    if (item && item.callback) {
+      item.callback(err)
+    }
+  })
 }
 
 Connection.prototype._reset = function (resend) {
@@ -350,15 +365,6 @@ Connection.prototype._reset = function (resend) {
     }
 
     this._debug('resetting')
-
-    if (!resend) {
-      var err = new Error('connection was reset')
-      this._deliveryCallbacks.values.forEach(function (item) {
-        if (item && item.callback) {
-          item.callback(err)
-        }
-      })
-    }
 
     this.emit('reset')
   }
@@ -415,7 +421,9 @@ Connection.prototype._finishConnecting = function (packet) {
 
     // their conn id won
     this._debug('their conn wins')
-    if (this._syn) this._cancelPacket(this._syn)
+    if (this._syn) {
+      this._cancelPacket(this._syn)
+    }
 
     this._recvId = uint16(packet.connection + 1)
     this._sendId = packet.connection
@@ -504,7 +512,7 @@ Connection.prototype.receive = function (buffer) {
   if (packet.id === PACKET_STATE) return
 
   if (uint16(packet.seq - this._ack) >= BUFFER_SIZE) {
-    if (++this._old > 10) {
+    if (++this._old > 5) {
       this._debug('getting old packets, resetting connection')
   //     return this._sendAck() // old packet
       this._reset(true)
@@ -555,7 +563,7 @@ Connection.prototype._transmit = function (packet) {
   packet.sent = packet.sent === 0 ? packet.timestamp : timestamp()
   var message = packetToBuffer(packet)
   this._alive = true
-  this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
+  // this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
   this.emit('send', message)
 }
 
