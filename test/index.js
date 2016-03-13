@@ -95,9 +95,9 @@ test('basic', function (t) {
   console.log('this tests recovery when more than half the packets\n' +
     'are dropped so give it ~30 seconds to complete')
 
-  var a = new Connection()
+  var a = new Connection({ resendInterval: 100 })
   a._id = 'a'
-  var b = new Connection()
+  var b = new Connection({ resendInterval: 100 })
   b._id = 'b'
 
   // var bools = []
@@ -170,9 +170,9 @@ test('basic', function (t) {
 test('length-prefixed transport', function (t) {
   t.timeoutAfter(30000)
 
-  var ac = new Connection()
+  var ac = new Connection({ resendInterval: 100 })
   ac._id = 'a'
-  var bc = new Connection()
+  var bc = new Connection({ resendInterval: 100 })
   bc._id = 'b'
 
   var a = new Messenger({ client: ac })
