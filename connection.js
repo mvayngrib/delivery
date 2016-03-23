@@ -136,6 +136,18 @@ var Connection = function (options) {
     clearInterval(resend)
     clearInterval(keepAlive)
   })
+
+  ;['connect', 'resume', 'flush'].forEach(function (event) {
+    self.on(event, self._flush)
+  })
+
+  Object.defineProperty(this, '_backedUp', {
+    get: function () {
+      return self._writeBuffer.reduce(function (total, data) {
+        return total + self._countRequiredPackets(data)
+      }, 0)
+    }
+  })
 }
 
 Connection.MTU = MTU
@@ -235,43 +247,33 @@ Connection.prototype.send = function (data, ondelivered) {
     if (args[1]) args[1]()
   })
 
-  this._write(data)
+  this._bufferData(data)
+  this._flush()
 }
 
-Connection.prototype._write = function (data) {
-  var self = this
+Connection.prototype._flush = function () {
+  if (this._connecting || this._paused || !this._writeBuffer.length || !this._writable()) return
 
-  if (this._connecting) return this._writeOnce('connect', data)
-  if (this._paused) return this._writeOnce('resume', data)
-
+  var data = this._writeBuffer.shift()
+  var length = data.length
   while (this._writable()) {
     var payload = this._payload(data)
 
-    // this._debug('queueing data', payload.toString())
     this._sendOutgoing(createPacket(this, PACKET_DATA, payload))
 
-    if (payload.length === data.length) return
+    if (payload.length === data.length) return this._flush()
     data = data.slice(payload.length)
   }
 
-  this._writeOnce('flush', data)
+  this._writeBuffer.unshift(data)
 }
 
-Connection.prototype._writeOnce = function (event, data) {
-  var numPackets = this._countRequiredPackets(data)
-  this._backedUp += numPackets
-
-  var once = function () {
-    this._backedUp -= numPackets
-    this._write(data)
-  }
-
-  var handlers = this._subscribedTo[event] = this._subscribedTo[event] || []
-  handlers.push(once)
-  this.once(event, once)
+Connection.prototype._bufferData = function (data) {
+  this._writeBuffer.push(data)
 }
 
 Connection.prototype._writable = function () {
+  // !this._connecting && !this._paused &&
   return this._inflightPackets < BUFFER_SIZE - 1
 }
 
@@ -332,6 +334,8 @@ Connection.prototype._recvAck = function (ack) {
 
     if (packet) {
       this._inflightPackets--
+    } else {
+      console.log(this._id, 'boo', seq)
     }
   }
 
@@ -374,6 +378,7 @@ Connection.prototype._reset = function (resend) {
   this._paused = false
   this._subscribedTo = {}
   this._msgQueue = []
+  this._writeBuffer = []
   this._deliveryCallbacks = cyclist(BUFFER_SIZE)
   this._outgoing = cyclist(BUFFER_SIZE)
   this._incoming = cyclist(BUFFER_SIZE)
@@ -385,18 +390,18 @@ Connection.prototype._reset = function (resend) {
   this._connId = null
   this._recvId = null // tmp value for v8 opt
   this._sendId = null // tmp value for v8 opt
-  this._ack = 0
-  this._old = 0 // num old packets received in a row
-  this._seq = (Math.random() * UINT16) | 0
+  this._ack = null
+  // this._old = 0 // num old packets received in a row
+  this._seq = 0 //(Math.random() * UINT16) | 0
   this._syn = null
   this._theirSyn = null
-  this._backedUp = 0
+  // this._backedUp = 0
   // this._synack = null
 
   if (msgs) {
     msgs.forEach(function (args) {
-      self.send.apply(self, args)
-    })
+      this.send.apply(this, args)
+    }, this)
   }
 }
 
@@ -426,8 +431,11 @@ Connection.prototype._finishConnecting = function (packet) {
 
     // their conn id won
     this._debug('their conn wins')
+    var msgs
     if (this._syn) {
-      this._cancelPacket(this._syn)
+      msgs = this._msgQueue.slice()
+      this._reset()
+      // this._cancelPacket(this._syn)
     }
 
     this._recvId = uint16(packet.connection + 1)
@@ -436,7 +444,15 @@ Connection.prototype._finishConnecting = function (packet) {
     this._ack = uint16(packet.seq)
     this._theirSyn = packet
     this._syn = null
-    return this._sendAck()
+    this._sendAck()
+    if (msgs) {
+      // debugger
+      msgs.forEach(function (args) {
+        this.send.apply(this, args)
+      }, this)
+    }
+
+    return
   }
 
   if (!this._recvId) {
@@ -458,6 +474,7 @@ Connection.prototype._finishConnecting = function (packet) {
 
     this._ack = uint16(packet.seq - 1)
     this._recvAck(packet.ack)
+    // this._incoming.del(packet.seq)
     return this._onconnected()
   }
 
@@ -467,7 +484,7 @@ Connection.prototype._finishConnecting = function (packet) {
     if (isInitiator) return
 
     // this._recvAck(packet.ack)
-    if (this._ack === 0) {
+    if (this._ack === null) {
       this._ack = packet.seq - 1
     }
 
@@ -541,22 +558,15 @@ Connection.prototype.receive = function (buffer) {
   this._recvAck(packet.ack)
   if (packet.id === PACKET_STATE) return
 
-  if (uint16(packet.seq - this._ack) >= BUFFER_SIZE) {
-    if (++this._old > 5) {
-      this._debug('getting old packets, resetting connection')
-  //     return this._sendAck() // old packet
-      this._reset(true)
-    }
-
-    return
+  var place = uint16(packet.seq - this._ack)
+  if (!place || place >= BUFFER_SIZE) {
+    return this._sendAck() // old packet
   }
 
-  this._old = 0
   this._incoming.put(packet.seq, packet)
 
   while (packet = this._incoming.del(this._ack + 1)) {
     this._ack = uint16(this._ack + 1)
-
     if (packet.id === PACKET_DATA) {
       this.emit('receive', packet.data)
     }
@@ -570,7 +580,6 @@ Connection.prototype.receive = function (buffer) {
 }
 
 Connection.prototype._sendAck = function () {
-  // this._debug('acking', this._seq, this._ack)
   this._transmit(createPacket(this, PACKET_STATE, null)); // TODO: make this delayed
 }
 
@@ -581,13 +590,13 @@ Connection.prototype._sendOutgoing = function (packet) {
   this._transmit(packet)
 }
 
-Connection.prototype._cancelPacket = function (packet) {
-  var outgoing = this._outgoing.get(packet.seq)
-  if (outgoing === packet) {
-    this._outgoing.del(packet.seq)
-    this._inflightPackets--
-  }
-}
+// Connection.prototype._cancelPacket = function (packet) {
+//   var outgoing = this._outgoing.get(packet.seq)
+//   if (outgoing === packet) {
+//     this._outgoing.del(packet.seq)
+//     this._inflightPackets--
+//   }
+// }
 
 Connection.prototype._transmit = function (packet) {
   packet.sent = packet.sent === 0 ? packet.timestamp : timestamp()

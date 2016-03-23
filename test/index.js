@@ -178,14 +178,16 @@ test('length-prefixed transport', function (t) {
   var a = new Messenger({ client: ac })
   var b = new Messenger({ client: bc })
 
-  var aToB = ['hey'.repeat(1000), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
-  var bToA = ['ho'.repeat(1000), '我饿了'.repeat(3232)]
-  // var bools = []
+  var aToB = ['hey'.repeat(5e5), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
+  var bToA = ['ho'.repeat(5e5), '我饿了'.repeat(3232)]
+
+  var bools = []
   var togo = 2 * (aToB.length + bToA.length)
 
   createFaultyConnection(ac, bc, function () {
+    // return bools.shift()
     var r = Math.random() < 0.5 ? 1 : 0 // drop some packets
-    // bools.push(r)
+    bools.push(r ? 1 : 0)
     return r
   })
 
@@ -227,7 +229,7 @@ test('length-prefixed transport', function (t) {
     if (--togo === 0) {
       a.destroy()
       b.destroy()
-    // console.log('bools:', bools)
+      // console.log('bools:', '[' + bools.join(',') + ']')
     }
   }
 })
