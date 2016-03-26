@@ -6,6 +6,7 @@ var debug = require('debug')('sendy')
 var utils = require('./utils')
 var Connection = require('./connection')
 var UINT32 = 0xffffffff
+var COUNT_PROP = '_sendyCount'
 
 function LengthPrefixed (opts) {
   var self = this
@@ -53,23 +54,28 @@ LengthPrefixed.prototype._onDecoded = function (data) {
   this.emit('receive', data)
 }
 
-LengthPrefixed.prototype.reset = function () {
+LengthPrefixed.prototype.reset = function (abortPending) {
   if (this._destroyed) return
 
+  var cbs = this._deliveryCallbacks && this._deliveryCallbacks.slice()
   this._queued = 0
   this._deliveryCallbacks = []
   this._resetDecoder()
   this._client.reset()
+  if (abortPending && cbs) {
+    var err = new Error('aborted')
+    cbs.forEach(function (fn) {
+      fn(err)
+    })
+  }
 }
 
 LengthPrefixed.prototype.send = function (msg, cb) {
   var self = this
 
   if (cb) {
-    this._deliveryCallbacks.push({
-      count: ++this._queued,
-      callback: cb
-    })
+    cb[COUNT_PROP] = ++this._queued
+    this._deliveryCallbacks.push(cb)
   }
 
   var data = utils.toBuffer(msg)
@@ -78,12 +84,10 @@ LengthPrefixed.prototype.send = function (msg, cb) {
 
   this._client.send(Buffer.concat([length, data], totalLength), function () {
     self._queued--
-    self._deliveryCallbacks = self._deliveryCallbacks.filter(function (item) {
-      if (--item.count === 0) {
-        var cb = item.callback
-        if (cb) cb()
-
-        return
+    self._deliveryCallbacks = self._deliveryCallbacks.filter(function (cb) {
+      if (--cb[COUNT_PROP] === 0) {
+        cb()
+        return false
       }
 
       return true
