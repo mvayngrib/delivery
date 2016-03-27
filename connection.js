@@ -244,9 +244,9 @@ Connection.prototype.send = function (data, ondelivered) {
   // register callback for ack for last piece
   var ackIdx = this._seq + packetsToGo + this._backedUp - 1
   // this._debug('scheduling callback for ack of ' + ackIdx)//(ackIdx & BUFFER_SIZE))
-  this._deliveryCallbacks.put(ackIdx, function () {
+  this._deliveryCallbacks.put(ackIdx, function (err) {
     var args = self._msgQueue.shift()
-    if (args[1]) args[1]()
+    if (args[1]) args[1](err)
   })
 
   this._bufferData(data)
