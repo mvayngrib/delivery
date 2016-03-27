@@ -109,7 +109,9 @@ proto.cancelPending = function (recipient) {
   var err = new Error('canceled')
   for (var id in this._rclients) {
     if (!recipient || id === recipient) {
-      this._rclients[id].destroy()
+      if (this._queued[id] && this._queued[id].length) {
+        this._rclients[id].destroy()
+      }
     }
   }
 }
