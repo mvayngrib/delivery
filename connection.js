@@ -135,6 +135,8 @@ var Connection = function (options) {
     self._debug('destroyed')
     clearInterval(resend)
     clearInterval(keepAlive)
+    self.clearTimeout()
+    self.cancelPending()
   })
 
   ;['connect', 'resume', 'flush'].forEach(function (event) {
@@ -350,10 +352,8 @@ Connection.prototype.reset = function () {
 
 Connection.prototype.cancelPending = function () {
   var err = new Error('connection was reset')
-  this._deliveryCallbacks.values.forEach(function (item) {
-    if (item && item.callback) {
-      item.callback(err)
-    }
+  this._deliveryCallbacks.values.forEach(function (fn) {
+    if (fn) fn(err)
   })
 }
 
@@ -362,21 +362,13 @@ Connection.prototype._reset = function (resend) {
 
   this._debug('reset, resend: ' + (!!resend))
   if (this._msgQueue) {
-    for (var e in this._subscribedTo) {
-      for (var i = 0; i < this._subscribedTo[e].length; i++) {
-        this.removeListener(e, this._subscribedTo[e][i])
-      }
-    }
-
     this._debug('resetting')
-
     this.emit('reset')
   }
 
   var msgs = resend && this._msgQueue && this._msgQueue.slice()
 
   this._paused = false
-  this._subscribedTo = {}
   this._msgQueue = []
   this._writeBuffer = []
   this._deliveryCallbacks = cyclist(BUFFER_SIZE)
@@ -456,8 +448,10 @@ Connection.prototype._finishConnecting = function (packet) {
   }
 
   if (!this._recvId) {
-    this._debug('expected SYN, got ' + packetType(packet) + ', sending own SYN')
-    return this._sendSyn()
+    // this._debug('expected SYN, got ' + packetType(packet) + ', sending own SYN')
+    this._debug('expected SYN, got ' + packetType(packet) + ', sending RESET')
+    return this._transmit(createPacket(this, PACKET_RESET))
+    // return this._sendSyn()
   }
 
   if (!this._isPacketForThisConnection(packet)) {
@@ -466,28 +460,22 @@ Connection.prototype._finishConnecting = function (packet) {
   }
 
   var isInitiator = this._sendId > this._recvId
-  if (packet.id === PACKET_STATE) {
-    if (!isInitiator) return
+  if (!isInitiator) {
+    if (this._ack === null) {
+      this._ack = packet.seq - 1
+    }
 
+    return this._onconnected()
+  }
+
+  if (packet.id === PACKET_STATE) {
     var ackedPacket = this._outgoing.get(packet.ack)
     if (!ackedPacket || ackedPacket.id !== PACKET_SYN) return
 
     this._ack = uint16(packet.seq - 1)
     this._recvAck(packet.ack)
+    // this._sendAck()
     // this._incoming.del(packet.seq)
-    return this._onconnected()
-  }
-
-  if (packet.id === PACKET_DATA) {
-    // this._incoming.put(packet.seq, packet)
-    // wait for PACKET_STATE
-    if (isInitiator) return
-
-    // this._recvAck(packet.ack)
-    if (this._ack === null) {
-      this._ack = packet.seq - 1
-    }
-
     return this._onconnected()
   }
 }
