@@ -91,6 +91,122 @@ test('disconnect', function (t) {
   }
 })
 
+test('timeout', function (t) {
+  var a = new Connection({ resendInterval: 100 })
+  a._id = 'a'
+  var b = new Connection({ resendInterval: 100 })
+  b._id = 'b'
+
+  // var bools = []
+  // var bools = EVIL[0]
+
+  var timedOut = false
+  var allow = true
+
+  a.setTimeout(500)
+  a.on('timeout', function () {
+    timedOut = true
+  })
+
+  createFaultyConnection(a, b, function () {
+    return allow
+  })
+
+  var aToB = ['hey']
+  var bToA = ['ho']
+
+  var aInterval = setInterval(function () {
+    aToB.forEach(msg => {
+      a.send(msg)
+    })
+  }, 300)
+
+  var bInterval = setInterval(function () {
+    bToA.forEach(msg => {
+      b.send(msg)
+    })
+  }, 300)
+
+  setTimeout(function () {
+    t.equal(timedOut, false)
+    clearInterval(aInterval)
+    clearInterval(bInterval)
+    var timeout = setTimeout(function () {
+      t.equal(timedOut, true)
+      a.destroy()
+      b.destroy()
+      t.end()
+    }, 1000)
+  }, 2000)
+})
+
+test('length-prefixed transport', function (t) {
+  t.timeoutAfter(30000)
+
+  var ac = new Connection({ resendInterval: 100 })
+  ac._id = 'a'
+  var bc = new Connection({ resendInterval: 100 })
+  bc._id = 'b'
+
+  var a = new Messenger({ client: ac })
+  var b = new Messenger({ client: bc })
+
+  var aToB = ['hey'.repeat(5e5), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
+  var bToA = ['ho'.repeat(5e5), '我饿了'.repeat(3232)]
+
+  var bools = []
+  var togo = 2 * (aToB.length + bToA.length)
+
+  createFaultyConnection(ac, bc, function () {
+    // return bools.shift()
+    var r = Math.random() < 0.5 ? 1 : 0 // drop some packets
+    bools.push(r ? 1 : 0)
+    return r
+  })
+
+  t.plan(togo)
+
+  aToB.forEach(msg => {
+    a.send(msg, () => {
+      t.pass('a delivered ' + abbr(msg))
+      finish()
+    })
+  })
+
+  process.nextTick(function () {
+    bToA.forEach(msg => {
+      b.send(msg, () => {
+        t.pass('b delivered ' + abbr(msg))
+        finish()
+      })
+    })
+  })
+
+  // var aRecvIdx = 0
+  // var bRecvIdx = 0
+  a.on('receive', msg => {
+    msg = msg.toString()
+    console.log('a received ' + abbr(msg))
+    t.deepEqual(msg, bToA.shift())
+    finish()
+  })
+
+  b.on('receive', msg => {
+    msg = msg.toString()
+    console.log('b received ' + abbr(msg))
+    t.deepEqual(msg, aToB.shift())
+    finish()
+  })
+
+  function finish () {
+    if (--togo === 0) {
+      a.destroy()
+      b.destroy()
+      // console.log('bools:', '[' + bools.join(',') + ']')
+    }
+  }
+})
+
 test('basic', function (t) {
   console.log('this tests recovery when more than half the packets\n' +
     'are dropped so give it ~30 seconds to complete')
