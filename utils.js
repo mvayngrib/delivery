@@ -20,7 +20,7 @@ exports.connect = function connect (/* pipeline */) {
   var rest = slice.call(arguments, 1)
   rest.reduce(function (prev, next) {
     // bubble 'send' event
-    reemit(next, prev, ['send', 'pause', 'resume'])
+    reemit(next, prev, ['send', 'pause', 'resume', 'timeout'])
     prev.receive = function () {
       // -> forward receive call
       return next.receive.apply(next, arguments)
@@ -28,5 +28,9 @@ exports.connect = function connect (/* pipeline */) {
 
     if (!prev.pause) prev.pause = next.pause
     if (!prev.resume) prev.resume = next.resume
+    if (!prev.setTimeout && !prev.clearTimeout) {
+      prev.setTimeout = next.setTimeout
+      prev.clearTimeout = next.clearTimeout
+    }
   }, top)
 }

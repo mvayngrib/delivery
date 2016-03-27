@@ -89,11 +89,20 @@ proto.send = function (recipient, msg, ondelivered) {
 
   queue.push([msg, cbWrapper])
   rclient.send(msg, cbWrapper)
-  if (!this._sendTimeout) return
+  // if (!this._sendTimeout) return
 
-  timeout = setTimeout(function () {
-    cbWrapper(new Error('timed out'))
-  }, self._sendTimeout)
+  // timeout = setTimeout(function () {
+  //   cbWrapper(new Error('timed out'))
+  // }, self._sendTimeout)
+}
+
+proto.clearTimeout = function () {
+  this._proxyMethod('clearTimeout', arguments)
+}
+
+proto.setTimeout = function (millis) {
+  this._sendTimeout = millis
+  this._proxyMethod('setTimeout', arguments)
 }
 
 proto.cancelPending = function (recipient) {
@@ -118,6 +127,14 @@ proto._getReliableClientFor = function (recipient) {
 
   rclient = this._rclients[recipient] = this._clientForRecipient(recipient)
   if (!rclient) return
+
+  if (this._sendTimeout) {
+    rclient.setTimeout(this._sendTimeout)
+  }
+
+  rclient.on('timeout', function () {
+    self.emit('timeout', recipient)
+  })
 
   rclient.on('receive', function (msg) {
     // emit message from whoever `recipient` is
@@ -144,6 +161,13 @@ proto._getReliableClientFor = function (recipient) {
   })
 
   return rclient
+}
+
+proto._proxyMethod = function (method, args) {
+  for (var id in this._rclients) {
+    var c = this._rclients[id]
+    c[method].apply(c, args)
+  }
 }
 
 proto.destroy = function () {
