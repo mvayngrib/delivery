@@ -82,11 +82,11 @@ LengthPrefixed.prototype.send = function (msg, cb) {
   var length = new Buffer(varint.encode(data.length))
   var totalLength = data.length + length.length
 
-  this._client.send(Buffer.concat([length, data], totalLength), function () {
+  this._client.send(Buffer.concat([length, data], totalLength), function (err) {
     self._queued--
     self._deliveryCallbacks = self._deliveryCallbacks.filter(function (cb) {
       if (--cb[COUNT_PROP] === 0) {
-        cb()
+        cb(err)
         return false
       }
 
