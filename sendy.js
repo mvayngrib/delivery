@@ -3,6 +3,7 @@ var util = require('util')
 var varint = require('varint')
 var lps = require('length-prefixed-stream')
 var debug = require('debug')('sendy')
+var once = require('once')
 var utils = require('./utils')
 var Connection = require('./connection')
 var UINT32 = 0xffffffff
@@ -54,43 +55,66 @@ LengthPrefixed.prototype._onDecoded = function (data) {
   this.emit('receive', data)
 }
 
-LengthPrefixed.prototype.reset = function (abortPending) {
+LengthPrefixed.prototype.reset = function (err) {
   if (this._destroyed) return
 
-  var cbs = this._deliveryCallbacks && this._deliveryCallbacks.slice()
+  var cbs = err && this._deliveryCallbacks && this._deliveryCallbacks.slice()
   this._queued = 0
   this._deliveryCallbacks = []
   this._resetDecoder()
-  this._client.reset()
-  if (abortPending && cbs) {
-    var err = new Error('aborted')
-    cbs.forEach(function (fn) {
-      fn(err)
-    })
-  }
+  this._client.reset(err)
 }
 
 LengthPrefixed.prototype.send = function (msg, cb) {
   var self = this
 
-  if (cb) {
-    cb[COUNT_PROP] = ++this._queued
-    this._deliveryCallbacks.push(cb)
+  if (this._cancelingPending) {
+    return process.nextTick(function () {
+      self.send(msg, cb)
+    })
   }
+
+  cb = once(cb || function () {})
+  cb[COUNT_PROP] = ++this._queued
+  this._deliveryCallbacks.push(cb)
 
   var data = utils.toBuffer(msg)
   var length = new Buffer(varint.encode(data.length))
   var totalLength = data.length + length.length
 
   this._client.send(Buffer.concat([length, data], totalLength), function (err) {
-    self._queued--
-    self._deliveryCallbacks = self._deliveryCallbacks.filter(function (cb) {
-      if (--cb[COUNT_PROP] === 0) {
-        cb(err)
-        return false
-      }
+    if (err) {
+      // cancel all queued
+      self._cancelingPending = true
+      process.nextTick(function () {
+        self._cancelingPending = false
+      })
 
-      return true
+      var cbs = self._deliveryCallbacks.slice()
+      self._deliveryCallbacks.length = 0
+      self._queued = 0
+      cbs.forEach(function (fn) {
+        fn(err)
+      })
+
+      return
+    }
+
+    self._queued--
+    self._deliveryCallbacks.forEach(function (cb) {
+      cb[COUNT_PROP]--
+    })
+
+    var callNow = self._deliveryCallbacks.filter(function (cb) {
+      return cb[COUNT_PROP] === 0
+    })
+
+    self._deliveryCallbacks = self._deliveryCallbacks.filter(function (cb) {
+      return cb[COUNT_PROP] !== 0
+    })
+
+    callNow.forEach(function (cb) {
+      cb()
     })
   })
 }

@@ -3,8 +3,11 @@ var util = require('util')
 var EventEmitter = require('events').EventEmitter
 var typeforce = require('typeforce')
 var extend = require('xtend/mutable')
+var bindAll = require('bindall')
+var once = require('once')
 var debug = require('debug')('sendy-switchboard')
 var Sendy = require('./sendy')
+var noop = function () {}
 var nochange = function (data) {
   return data
 }
@@ -27,6 +30,8 @@ function Switchboard (opts) {
 
   EventEmitter.call(this)
 
+  bindAll(this)
+
   this._encode = opts.encode || nochange
   this._decode = opts.decode || nochange
   this._url = opts.url
@@ -37,6 +42,8 @@ function Switchboard (opts) {
 
   this._uclient = opts.unreliable
   this._uclient.on('receive', function (msg) {
+    if (self._destroyed) return
+
     msg = self._decode(msg)
     var rclient = self._getReliableClientFor(msg.from)
     if (rclient) {
@@ -47,6 +54,8 @@ function Switchboard (opts) {
   })
 
   this._uclient.on('disconnect', function () {
+    if (self._destroyed) return
+
     for (var id in self._rclients) {
       var rclient = self._rclients[id]
       if (rclient.pause) rclient.pause()
@@ -54,6 +63,8 @@ function Switchboard (opts) {
   })
 
   this._uclient.on('connect', function () {
+    if (self._destroyed) return
+
     for (var id in self._rclients) {
       var rclient = self._rclients[id]
       if (rclient.resume) rclient.resume()
@@ -68,27 +79,56 @@ var proto = Switchboard.prototype
 proto.send = function (recipient, msg, ondelivered) {
   var self = this
 
+  if (this._cancelingPending) {
+    return process.nextTick(function () {
+      self.send(recipient, msg, ondelivered)
+    })
+  }
+
   debug('queueing msg to ' + recipient)
   var rclient = this._getReliableClientFor(recipient)
   if (!rclient) return
+
+  ondelivered = once(ondelivered || noop)
 
   var queue = this._queued[recipient]
   if (!queue) queue = this._queued[recipient] = []
 
   var done
   var timeout
-  var cbWrapper = function (err) {
+  queue.push({
+    msg: msg,
+    callback: ondelivered
+  })
+
+  rclient.send(msg, function (err) {
     clearTimeout(timeout)
     if (done) return
 
     done = true
-    // queue.splice(queue.indexOf(job), 1)
-    queue.shift() // rclient delivers in order
-    if (ondelivered) ondelivered(err)
-  }
+    if (!err) {
+      var item = queue.shift() // rclient delivers in order
+      if (item.callback) item.callback()
 
-  queue.push([msg, cbWrapper])
-  rclient.send(msg, cbWrapper)
+      return
+    }
+
+    // pause operations
+    self._cancelingPending = true
+    process.nextTick(function () {
+      self._cancelingPending = false
+    })
+
+    // as we're in the business of in-order delivery
+    // all the queued messages should be failed
+    // so whoever's running this operation can requeue them
+    var tmp = queue.slice()
+    queue.length = 0
+    tmp.forEach(function (item) {
+      item.callback(err)
+    })
+  })
+
   // if (!this._sendTimeout) return
 
   // timeout = setTimeout(function () {
@@ -110,7 +150,14 @@ proto.cancelPending = function (recipient) {
   for (var id in this._rclients) {
     if (!recipient || id === recipient) {
       if (this._queued[id] && this._queued[id].length) {
-        this._rclients[id].destroy()
+        // queues get cleaned up in 'destroy' handler
+        // this._rclients[id].destroy()
+        this._rclients[id].reset(err)
+        var q = this._queued[id].slice()
+        this._queued[id].length = 0
+        q.forEach(function (item) {
+          if (item.callback) item.callback(err)
+        })
       }
     }
   }
@@ -135,30 +182,38 @@ proto._getReliableClientFor = function (recipient) {
   }
 
   rclient.on('timeout', function () {
+    if (self._destroyed) return
+
     self.emit('timeout', recipient)
-  })
+  }),
 
   rclient.on('receive', function (msg) {
+    if (self._destroyed) return
+
     // emit message from whoever `recipient` is
     // debug('bubbling received msg from ' + recipient + ', length: ' + msg.length)
     self.emit('message', msg, recipient)
-  })
+  }),
 
   rclient.on('send', function (msg) {
+    if (self._destroyed) return
+
     // debug('sending msg to ' + recipient + ', length: ' + msg.length)
     msg = self._encode(msg, recipient)
     self._uclient.send(msg)
-  })
+  }),
 
   rclient.on('destroy', function () {
+    // cleanup.forEach(call)
+
     delete self._rclients[recipient]
     var queue = self._queued[recipient]
-    if (!queue) return
+    if (!queue || !queue.length) return
 
     var err = new Error('connection destroyed')
     delete self._queued[recipient]
     for (var i = 0; i < queue.length; i++) {
-      queue[i][1](err)
+      queue[i].callback(err)
     }
   })
 
@@ -173,13 +228,17 @@ proto._proxyMethod = function (method, args) {
 }
 
 proto.destroy = function () {
+  if (this._destroyed) return
+
+  this._destroyed = true
+
   for (var recipient in this._rclients) {
     this._rclients[recipient].destroy()
   }
 
   this._uclient.destroy()
   delete this._reliabilityClient
-  delete this._wsClient
+  delete this._uclient
 }
 
 ;['pause', 'resume'].forEach(function (method) {
@@ -192,3 +251,14 @@ proto.destroy = function () {
     }
   }
 })
+
+// function listen (emitter, event, handler) {
+//   emitter.on(event, handler)
+//   return function () {
+//     emitter.removeListener(event, handler)
+//   }
+// }
+
+// function call (fn) {
+//   fn()
+// }

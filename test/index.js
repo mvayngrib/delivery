@@ -1,5 +1,7 @@
+// var WHY = require('why-is-node-running')
 var EventEmitter = require('events').EventEmitter
 var test = require('tape')
+var Sendy = require('../sendy')
 var Switchboard = require('../switchboard')
 var Connection = require('../connection')
 var Messenger = require('../')
@@ -283,73 +285,6 @@ test('basic', function (t) {
   }
 })
 
-test('length-prefixed transport', function (t) {
-  t.timeoutAfter(30000)
-
-  var ac = new Connection({ resendInterval: 100 })
-  ac._id = 'a'
-  var bc = new Connection({ resendInterval: 100 })
-  bc._id = 'b'
-
-  var a = new Messenger({ client: ac })
-  var b = new Messenger({ client: bc })
-
-  var aToB = ['hey'.repeat(5e5), 'blah!'.repeat(1234), 'booyah'.repeat(4321)]
-  var bToA = ['ho'.repeat(5e5), '我饿了'.repeat(3232)]
-
-  var bools = []
-  var togo = 2 * (aToB.length + bToA.length)
-
-  createFaultyConnection(ac, bc, function () {
-    // return bools.shift()
-    var r = Math.random() < 0.5 ? 1 : 0 // drop some packets
-    bools.push(r ? 1 : 0)
-    return r
-  })
-
-  t.plan(togo)
-
-  aToB.forEach(msg => {
-    a.send(msg, () => {
-      t.pass('a delivered ' + abbr(msg))
-      finish()
-    })
-  })
-
-  process.nextTick(function () {
-    bToA.forEach(msg => {
-      b.send(msg, () => {
-        t.pass('b delivered ' + abbr(msg))
-        finish()
-      })
-    })
-  })
-
-  // var aRecvIdx = 0
-  // var bRecvIdx = 0
-  a.on('receive', msg => {
-    msg = msg.toString()
-    console.log('a received ' + abbr(msg))
-    t.deepEqual(msg, bToA.shift())
-    finish()
-  })
-
-  b.on('receive', msg => {
-    msg = msg.toString()
-    console.log('b received ' + abbr(msg))
-    t.deepEqual(msg, aToB.shift())
-    finish()
-  })
-
-  function finish () {
-    if (--togo === 0) {
-      a.destroy()
-      b.destroy()
-      // console.log('bools:', '[' + bools.join(',') + ']')
-    }
-  }
-})
-
 test('pause/resume', function (t) {
   var a = new Connection()
   a._id = 'a'
@@ -454,7 +389,6 @@ test('switchboard', function (t) {
     return ee
   })
 
-  var msgs = ['hey', 'ho']
   var switchboards = names.map(function (name, i) {
     var s = new Switchboard({
       unreliable: unreliables[i],
@@ -496,6 +430,184 @@ test('switchboard', function (t) {
       }, 1000)
     }, 1000)
   })
+})
+
+test.only('switchboard disconnect', function (t) {
+  // t.timeoutAfter(5000)
+  var names = ['a', 'b', 'c']
+  var blocked = {}
+  // var waitForTimeout
+  // var waitedForTimeout
+  // var cliffJumper = 'a'
+  var disconnected
+  var reconnected
+  var unreliables = names.map(function (name, i) {
+    // these are 100% reliable, but that's not what we're testing here
+    var ee = new EventEmitter()
+    ee.on('connect', function () {
+      if (disconnected) {
+        disconnected = false
+        reconnected = true
+      }
+    })
+
+    ee.on('disconnect', function () {
+      disconnected = true
+    })
+
+    ee.name = name
+    ee.destroy = function () {}
+    ee.send = function (msg) {
+      if (blocked[name]) return
+
+      var to = unreliables.filter(function (u) {
+        return u.name === msg.to
+      })[0]
+
+      process.nextTick(function () {
+        // if (!waitForTimeout) {
+        if (!disconnected) {
+          to.emit('receive', msg)
+        }
+        // } else {
+        //   console.log('no')
+        // }
+      })
+    }
+
+    ee.on('disconnect', function () {
+      debugger
+      switchboards[i].cancelPending()
+    })
+
+    return ee
+  })
+
+  var cliffJumper = unreliables[0]
+  var msgs = ['hey'.repeat(5e5), 'ho', 'blah!'.repeat(1234), 'booyah'.repeat(4321), 'ooga']
+  // var msgs = ['hey', 'ho', 'blah!', 'booyah', 'ooga']
+  var togo = msgs.length * names.length * (names.length - 1) * 2 // send and receive
+  t.plan(togo)
+
+  var received = 0
+  var switchboards = names.map(function (name, i) {
+    var s = new Switchboard({
+      unreliable: unreliables[i],
+      clientForRecipient: function (recipient) {
+        return new Sendy({
+          mtu: 100,
+          // client: newBadConnection()
+        })
+      },
+      encode: function (msg, to) {
+        return {
+          data: msg,
+          from: name,
+          to: to
+        }
+      }
+    })
+
+    var toRecv = {}
+    var prev = {}
+    names.forEach(function (other, j) {
+      if (i === j) return
+
+      toRecv[other] = msgs.slice()
+      setInterval(function () {
+        console.log(name, other, toRecv[other].length)
+      }, 5000).unref()
+    })
+
+    s.on('message', function (msg, from) {
+      msg = msg.toString()
+      if (prev[from] === msg) {
+        console.log('discarding duplicate')
+        return
+      }
+
+      received++
+
+      t.equal(msg, toRecv[from].shift())
+      console.log(name, 'received from', from, ',', toRecv[from].length, 'togo')
+      prev[from] = msg
+
+      // if (name === cliffJumper && !waitedForTimeout) waitForTimeout = true
+
+      finish()
+
+      // blocked[from] = true
+    })
+
+    // s.on('timeout', function (recipient) {
+    //   t.comment('forced timeout')
+    //   // waitedForTimeout = true
+    //   // waitForTimeout = false
+
+    //   s.cancelPending(recipient)
+    // })
+
+    // s.setTimeout(500)
+
+    return s
+  })
+
+  switchboards.forEach(function (sender, i) {
+    names.forEach(function (receiver, j) {
+      if (i === j) return
+
+      var toSend = msgs.slice()
+      sendNext()
+
+      function sendNext () {
+        var msg = toSend.shift()
+        if (!msg) return
+
+        sender.send(receiver, msg, function (err) {
+          if (err) {
+            toSend.unshift(msg)
+            console.log(names[i], 'resending to', names[j], err, toSend.length)
+          } else {
+            if (!disconnected && !reconnected && toSend.length === 2) {
+              process.nextTick(function () {
+                cliffJumper.emit('disconnect')
+                setTimeout(function () {
+                  cliffJumper.emit('connect')
+                }, 2000)
+              })
+            }
+
+            t.pass(`${names[i]} delivered msg to ${receiver}, ${toSend.length} to go `)
+            finish() // delivered
+          }
+
+          sendNext()
+        })
+      }
+    })
+  })
+
+  function finish () {
+    if (--togo === 0) cleanup()
+  }
+
+  function cleanup () {
+    switchboards.forEach(function (s) {
+      s.destroy()
+    })
+  }
+
+  // function newBadConnection (opts) {
+  //   var c = new Connection(opts)
+  //   var receive = c.receive
+  //   c.receive = function () {
+  //     // if (!waitForTimeout) {
+  //       return receive.apply(this, arguments)
+  //     // } else {
+  //     //   console.log('no')
+  //     // }
+  //   }
+  // }
 })
 
 function createFaultyConnection (a, b, filter) {

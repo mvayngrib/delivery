@@ -136,7 +136,7 @@ var Connection = function (options) {
     clearInterval(resend)
     clearInterval(keepAlive)
     self.clearTimeout()
-    self.cancelPending()
+    self._cancelPending()
   })
 
   ;['connect', 'resume', 'flush'].forEach(function (event) {
@@ -346,13 +346,17 @@ Connection.prototype._recvAck = function (ack) {
   }
 }
 
-Connection.prototype.reset = function () {
+Connection.prototype.reset = function (err) {
+  this._cancelPending(err)
   this._reset() // don't resend
 }
 
-Connection.prototype.cancelPending = function () {
-  var err = new Error('connection was reset')
-  this._deliveryCallbacks.values.forEach(function (fn) {
+Connection.prototype._cancelPending = function (err) {
+  err = err || new Error('connection was reset')
+  var cbs = this._deliveryCallbacks.values.slice()
+  this._deliveryCallbacks = cyclist(BUFFER_SIZE)
+
+  cbs.forEach(function (fn) {
     if (fn) fn(err)
   })
 }
