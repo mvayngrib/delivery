@@ -593,8 +593,6 @@ Connection.prototype._sendOutgoing = function (packet) {
 // }
 
 Connection.prototype._transmit = function (packet) {
-  packet.timesSent = (packet.timesSent || 0) + 1
-  if (packet.timesSent > 5) console.log('times sent', packet.timesSent)
   packet.sent = packet.sent === 0 ? packet.timestamp : timestamp()
   var message = packetToBuffer(packet)
   this._alive = true
