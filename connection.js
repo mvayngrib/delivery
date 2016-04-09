@@ -62,6 +62,8 @@ var bufferToPacket = function (buffer) {
 }
 
 var packetToBuffer = function (packet) {
+  if (packet.buffer) return packet.buffer
+
   var buffer = new Buffer(20 + (packet.data ? packet.data.length : 0))
   buffer[0] = packet.id | VERSION
   buffer[1] = EXTENSION
@@ -72,7 +74,7 @@ var packetToBuffer = function (packet) {
   buffer.writeUInt16BE(packet.seq, 16)
   buffer.writeUInt16BE(packet.ack, 18)
   if (packet.data) packet.data.copy(buffer, 20)
-  return buffer
+  return packet.buffer = buffer
 }
 
 var packetType = function (packet) {
@@ -346,10 +348,10 @@ Connection.prototype._recvAck = function (ack) {
   }
 }
 
-Connection.prototype.reset = function (err) {
-  this._cancelPending(err)
-  this._reset() // don't resend
-}
+// Connection.prototype.reset = function (err) {
+//   this._cancelPending(err)
+//   this._reset() // don't resend
+// }
 
 Connection.prototype._cancelPending = function (err) {
   err = err || new Error('connection was reset')
@@ -413,7 +415,7 @@ Connection.prototype._finishConnecting = function (packet) {
 
     // our conn id should win
     // ignore their syn and keep resending ours
-    if (this._recvId > packet.connection) {
+    if (this._syn && this._recvId > packet.connection) {
       this._debug('our conn wins')
       return
     }
@@ -591,10 +593,12 @@ Connection.prototype._sendOutgoing = function (packet) {
 // }
 
 Connection.prototype._transmit = function (packet) {
+  packet.timesSent = (packet.timesSent || 0) + 1
+  if (packet.timesSent > 5) console.log('times sent', packet.timesSent)
   packet.sent = packet.sent === 0 ? packet.timestamp : timestamp()
   var message = packetToBuffer(packet)
   this._alive = true
-  this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
+  // this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
   this.emit('send', message)
 }
 

@@ -55,15 +55,15 @@ LengthPrefixed.prototype._onDecoded = function (data) {
   this.emit('receive', data)
 }
 
-LengthPrefixed.prototype.reset = function (err) {
-  if (this._destroyed) return
+// LengthPrefixed.prototype.reset = function (err) {
+//   if (this._destroyed) return
 
-  var cbs = err && this._deliveryCallbacks && this._deliveryCallbacks.slice()
-  this._queued = 0
-  this._deliveryCallbacks = []
-  this._resetDecoder()
-  this._client.reset(err)
-}
+//   var cbs = err && this._deliveryCallbacks && this._deliveryCallbacks.slice()
+//   this._queued = 0
+//   this._deliveryCallbacks = []
+//   this._resetDecoder()
+//   this._client.reset(err)
+// }
 
 LengthPrefixed.prototype.send = function (msg, cb) {
   var self = this
@@ -84,20 +84,22 @@ LengthPrefixed.prototype.send = function (msg, cb) {
 
   this._client.send(Buffer.concat([length, data], totalLength), function (err) {
     if (err) {
-      // cancel all queued
-      self._cancelingPending = true
-      process.nextTick(function () {
-        self._cancelingPending = false
-      })
+      // less efficient but simpler
+      return self.destroy(err)
+      // // cancel all queued
+      // self._cancelingPending = true
+      // process.nextTick(function () {
+      //   self._cancelingPending = false
+      // })
 
-      var cbs = self._deliveryCallbacks.slice()
-      self._deliveryCallbacks.length = 0
-      self._queued = 0
-      cbs.forEach(function (fn) {
-        fn(err)
-      })
+      // var cbs = self._deliveryCallbacks.slice()
+      // self._deliveryCallbacks.length = 0
+      // self._queued = 0
+      // cbs.forEach(function (fn) {
+      //   fn(err)
+      // })
 
-      return
+      // return
     }
 
     self._queued--
@@ -120,11 +122,17 @@ LengthPrefixed.prototype.send = function (msg, cb) {
 }
 
 LengthPrefixed.prototype.destroy = function () {
-  if (this._client) {
-    this._client.destroy()
-    // nulled in 'destroy' handler too
-    // but this prevents subsequent destroy calls
-    this._client = null
-    this.emit('destroy')
+  if (this._destroyed) return
+
+  this._destroyed = true
+  this._client.destroy()
+  if (this._deliveryCallbacks.length) {
+    var err = new Error('destroyed')
+    var cbs = this._deliveryCallbacks
+    cbs.forEach(function (fn) {
+      fn(err)
+    })
   }
+
+  this.emit('destroy', err)
 }

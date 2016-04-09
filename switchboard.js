@@ -151,13 +151,8 @@ proto.cancelPending = function (recipient) {
     if (!recipient || id === recipient) {
       if (this._queued[id] && this._queued[id].length) {
         // queues get cleaned up in 'destroy' handler
-        // this._rclients[id].destroy()
-        this._rclients[id].reset(err)
-        var q = this._queued[id].slice()
-        this._queued[id].length = 0
-        q.forEach(function (item) {
-          if (item.callback) item.callback(err)
-        })
+        this._rclients[id].destroy()
+        // this._rclients[id].reset(err)
       }
     }
   }
@@ -203,14 +198,14 @@ proto._getReliableClientFor = function (recipient) {
     self._uclient.send(msg)
   }),
 
-  rclient.on('destroy', function () {
+  rclient.on('destroy', function (err) {
     // cleanup.forEach(call)
 
     delete self._rclients[recipient]
     var queue = self._queued[recipient]
     if (!queue || !queue.length) return
 
-    var err = new Error('connection destroyed')
+    err = err || new Error('connection was destroyed')
     delete self._queued[recipient]
     for (var i = 0; i < queue.length; i++) {
       queue[i].callback(err)
