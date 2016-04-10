@@ -240,17 +240,12 @@ Connection.prototype.send = function (data, ondelivered) {
   this.resume()
 
   data = utils.toBuffer(data)
-  // var packetsToGo = this._countRequiredPackets(data)
-
   this._msgQueue.push([data, ondelivered]) // normalized args
 
   // register callback for ack for last piece
-  // var ackIdx = this._seq + packetsToGo + this._backedUp - 1
-  // this._debug('scheduling callback for ack of ' + ackIdx)//(ackIdx & BUFFER_SIZE))
-
-  var ackIdx = this._seq % BUFFER_SIZE + Math.ceil((this._backedUp + data.length) / this._mtu) - 1
-
-  this._putDeliveryCallback(ackIdx, function (err) {
+  var bytesQueued = this._backedUp + data.length
+  var packetsTogo = Math.ceil(bytesQueued / this._mtu)
+  this._putDeliveryCallback(packetsTogo, function (err) {
     var args = self._msgQueue.shift()
     if (args[1]) args[1](err)
   })
@@ -259,11 +254,10 @@ Connection.prototype.send = function (data, ondelivered) {
   this._flush()
 }
 
-Connection.prototype._putDeliveryCallback = function (idx, fn) {
-  var rounds = Math.ceil(idx / BUFFER_SIZE)
-  if (rounds !== rounds | 0) rounds++
-
-  fn._sendyIdx = rounds
+Connection.prototype._putDeliveryCallback = function (numAcks, fn) {
+  // how many times to go around the circular buffer
+  fn._sendyRoundsLeft = Math.ceil(numAcks / BUFFER_SIZE)
+  var idx = this._seq + numAcks - 1 // current seq value is for the next packet
   var cbs = this._deliveryCallbacks.get(idx) || []
   cbs.push(fn)
   this._deliveryCallbacks.put(idx, cbs)
@@ -278,8 +272,8 @@ Connection.prototype._callDeliveryCallbacks = function (idx) {
   var callLater = []
   for (var i = 0; i < l; i++) {
     var fn = cbs[i]
-    fn._sendyIdx--
-    if (fn._sendyIdx === 0) {
+    fn._sendyRoundsLeft--
+    if (fn._sendyRoundsLeft <= 0) {
       callNow.push(fn)
     } else {
       callLater.push(fn)
@@ -299,8 +293,12 @@ Connection.prototype._callDeliveryCallbacks = function (idx) {
 Connection.prototype._flush = function () {
   if (this._connecting || this._paused || !this._writeBuffer.length || !this._writable()) return
 
+  var length = 0
   var data = this._writeBuffer.shift()
-  var length = data.length
+  while (length < this._mtu && this._writeBuffer.length) {
+    data = Buffer.concat([data, this._writeBuffer.shift()])
+  }
+
   while (this._writable()) {
     var payload = this._payload(data)
 
@@ -327,9 +325,9 @@ Connection.prototype._payload = function (data) {
   return data
 }
 
-Connection.prototype._countRequiredPackets = function (data) {
-  return Math.ceil(data.length / this._mtu)
-}
+// Connection.prototype._countRequiredPackets = function (data) {
+//   return Math.ceil(data.length / this._mtu)
+// }
 
 Connection.prototype._resend = function () {
   if (this._paused || !this._inflightPackets) return
@@ -361,23 +359,11 @@ Connection.prototype._recvAck = function (ack) {
 
   if (acked >= BUFFER_SIZE) return // sanity check
 
-  // this._debug(acked + ' packets acked')
   var callbacks = []
-  // console.log(offset, this._deliveryCallbacks.values.filter(f => f))
-  // console.log(this._deliveryCallbacks.get(offset))
   for (var i = 0; i < acked; i++) {
     var seq = offset + i
     var packet = this._outgoing.del(seq)
     this._callDeliveryCallbacks(seq)
-    // var cb = this._deliveryCallbacks.del(seq)
-    // if (cb) {
-    //   try {
-    //     cb()
-    //   } catch (err) {
-    //     this._debug('callback failed', err)
-    //   }
-    // }
-
     if (packet) {
       this._inflightPackets--
     } else {
@@ -396,7 +382,6 @@ Connection.prototype._recvAck = function (ack) {
 // }
 
 Connection.prototype._cancelPending = function (err) {
-  debugger
   err = err || new Error('connection was reset')
   var cbArrays = this._deliveryCallbacks.values.slice()
   this._deliveryCallbacks = cyclist(BUFFER_SIZE)
@@ -437,7 +422,7 @@ Connection.prototype._reset = function (resend) {
   this._sendId = null // tmp value for v8 opt
   this._ack = null
   // this._old = 0 // num old packets received in a row
-  this._seq = 0 //(Math.random() * UINT16) | 0
+  this._seq = this._id ? 105 : 372 //(Math.random() * UINT16) | 0
   this._syn = null
   this._theirSyn = null
   // this._backedUp = 0

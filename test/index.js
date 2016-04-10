@@ -28,13 +28,39 @@ test('disconnect', function (t) {
     return true
   })
 
+  // var dialogue = {
+  //   a: {
+  //     connection: a,
+  //     msgs: ['hey', 'ho', 'merry', 'christmas'],
+  //   },
+  //   b: {
+  //     connection: b,
+  //     msgs: ['who', 'you', 'calling', 'ho?']
+  //   }
+  // }
+
+  // var togo = 2
+  // Object.keys(dialogue).forEach((name, i) => {
+  //   var msgs = dialogue[name]
+  //   var str = msgs.join('')
+  //   togo += msgs.length
+  //   if (i === 0) send()
+  //   else process.nextTick(send)
+
+  //   function send () {
+  //     msgs.forEach(msg => {
+
+  //     })
+  //   }
+  // })
+
   var aToB = ['hey', 'ho', 'merry', 'christmas']
   var bToA = ['who', 'you', 'calling', 'ho?']
-  var togo = 2 * (aToB.length + bToA.length) // 2-way ticket for each message
+  var togo = (aToB.length + bToA.length) + 2 // 2-way ticket for each message
   t.plan(togo)
 
-  var aReceived = {}
-  var bReceived = {}
+  // var aReceived = {}
+  // var bReceived = {}
 
   aToB.forEach(msg => {
     a.send(msg, () => {
@@ -52,21 +78,40 @@ test('disconnect', function (t) {
     })
   })
 
+  var aToBStr = aToB.join('')
+  var aReceived = ''
   a.on('receive', msg => {
+    if (aReceived === bToAStr) return
+
     msg = msg.toString()
-    // console.log('a received ' + msg)
-    if (!aReceived[msg]) {
-      aReceived[msg] = true
+    console.log('a received ' + msg)
+    aReceived += msg
+    t.equal(bToAStr.indexOf(aReceived), 0)
+    if (bToAStr === msg) {
       finish()
     }
+
+    // if (!aReceived[msg]) {
+    //   aReceived[msg] = true
+    //   finish()
+    // }
   })
 
   var disconnected
+  var bToAStr = bToA.join('')
+  var bReceived = ''
   b.on('receive', msg => {
+    if (bReceived === aToBStr) return
+
     msg = msg.toString()
-    // console.log('b received ' + msg)
-    if (!bReceived[msg]) {
-      bReceived[msg] = true
+    console.log('b received ' + msg)
+    // if (!bReceived[msg]) {
+    //   bReceived[msg] = true
+    //   finish()
+    // }
+    bReceived += msg
+    t.equal(aToBStr.indexOf(bReceived), 0)
+    if (aToBStr === msg) {
       finish()
     }
 
@@ -78,13 +123,13 @@ test('disconnect', function (t) {
 
   function finish () {
     if (--togo === 0) {
-      aToB.forEach(msg => {
-        t.equal(bReceived[msg], true)
-      })
+      // aToB.forEach(msg => {
+      //   t.equal(bReceived[msg], true)
+      // })
 
-      bToA.forEach(msg => {
-        t.equal(aReceived[msg], true)
-      })
+      // bToA.forEach(msg => {
+      //   t.equal(aReceived[msg], true)
+      // })
 
       a.destroy()
       b.destroy()
@@ -230,7 +275,7 @@ test('basic', function (t) {
 
   var aToB = ['hey', 'ho']
   var bToA = ['who', 'you', 'calling', 'ho?']
-  var togo = 2 * (aToB.length + bToA.length) // 2-way ticket for each message
+  var togo = 2 + (aToB.length + bToA.length) // 2-way ticket for each message
   t.plan(togo)
 
   aToB.forEach(msg => {
@@ -252,14 +297,14 @@ test('basic', function (t) {
   a.on('receive', msg => {
     msg = msg.toString()
     // console.log('a received ' + msg)
-    t.deepEqual(msg, bToA.shift())
+    t.deepEqual(msg, bToA.join(''))
     finish()
   })
 
   b.on('receive', msg => {
     msg = msg.toString()
     // console.log('b received ' + msg)
-    t.deepEqual(msg, aToB.shift())
+    t.deepEqual(msg, aToB.join(''))
     finish()
   })
 
@@ -297,7 +342,7 @@ test('pause/resume', function (t) {
 
   var aToB = ['hey', 'ho']
   var bToA = ['who', 'you', 'calling', 'ho?']
-  var togo = 2 * (aToB.length + bToA.length) // 2-way ticket for each message
+  var togo = 2 + (aToB.length + bToA.length) // 2-way ticket for each message
   t.plan(togo)
 
   aToB.forEach(msg => {
@@ -319,14 +364,14 @@ test('pause/resume', function (t) {
   a.on('receive', msg => {
     msg = msg.toString()
     console.log('a received', msg)
-    t.deepEqual(msg, bToA.shift())
+    t.deepEqual(msg, bToA.join(''))
     finish()
   })
 
   b.on('receive', msg => {
     msg = msg.toString()
     console.log('b received', msg)
-    t.deepEqual(msg, aToB.shift())
+    t.deepEqual(msg, aToB.join(''))
     finish()
   })
 
@@ -432,7 +477,7 @@ test('switchboard', function (t) {
   })
 })
 
-test.only('switchboard disconnect', function (t) {
+test('switchboard disconnect', function (t) {
   // t.timeoutAfter(5000)
   var names = ['a', 'b', 'c'].slice(0, 2)
   var blocked = {}
@@ -476,7 +521,6 @@ test.only('switchboard disconnect', function (t) {
     }
 
     ee.on('disconnect', function () {
-      debugger
       switchboards[i].cancelPending()
     })
 
@@ -484,25 +528,49 @@ test.only('switchboard disconnect', function (t) {
   })
 
   var cliffJumper = unreliables[0]
-  var msgs = ['hey'.repeat(5e5), 'ho', 'blah!'.repeat(1234), 'booyah'.repeat(4321), 'ooga']
+  // var msgs = ['hey'.repeat(5e5), 'ho', 'blah!'.repeat(1234), 'booyah'.repeat(4321), 'ooga']
   // var msgs = ['hey'.repeat(20000)]//, 'ho'.repeat(100), 'blah!', 'booyah', 'ooga']
-  var togo = msgs.length * names.length * (names.length - 1) // send and receive
-  t.plan(togo)
+  var msgs = ['hey'.repeat(4), 'ho!'.repeat(4), 'yay'.repeat(4), 'poop', 'blah'.repeat(4)]
+  var togo = msgs.length * names.length * (names.length - 1) * 2 // send and receive
+  // t.plan(togo)
 
-  var received = 0
-  var switchboards = names.map(function (name, i) {
+  var received = {
+    from: {}
+  }
+
+  var delivered = {
+    from: {}
+  }
+
+  names.forEach(function (me) {
+    received.from[me] = {
+      to: {}
+    }
+    delivered.from[me] = {
+      to: {}
+    }
+
+    names.forEach(function (them) {
+      if (me !== them) {
+        received.from[me].to[them] = []
+        delivered.from[me].to[them] = []
+      }
+    })
+  })
+
+  var switchboards = names.map(function (myName, i) {
     var s = new Switchboard({
       unreliable: unreliables[i],
       clientForRecipient: function (recipient) {
         return new Sendy({
-          mtu: 100,
+          mtu: 2,
           // client: newBadConnection()
         })
       },
       encode: function (msg, to) {
         return {
           data: msg,
-          from: name,
+          from: myName,
           to: to
         }
       }
@@ -514,30 +582,18 @@ test.only('switchboard disconnect', function (t) {
       if (i === j) return
 
       toRecv[other] = msgs.slice()
-      // setInterval(function () {
-      //   console.log(name, other, toRecv[other].length)
-      // }, 5000).unref()
     })
 
     s.on('message', function (msg, from) {
-      console.log('received')
-      // msg = msg.toString()
-      // if (prev[from] === msg) {
-      //   console.log('discarding duplicate')
-      //   return
-      // }
+      msg = msg.toString()
+      if (prev[from] === msg) return // disconnect side-effect
 
-      // received++
-
-      // t.equal(msg, toRecv[from].shift())
-      // console.log(name, 'received from', from, ',', toRecv[from].length, 'togo')
-      // prev[from] = msg
-
-      // // if (name === cliffJumper && !waitedForTimeout) waitForTimeout = true
-
-      // finish()
-
-      // blocked[from] = true
+      prev[from] = msg
+      var expected = toRecv[from].shift()
+      t.equal(msg, expected)
+      // t.ok(delivered.from[from].to[myName].length < toRecv[from].length)
+      received.from[from].to[myName].push(msg)
+      finish()
     })
 
     // s.on('timeout', function (recipient) {
@@ -554,6 +610,7 @@ test.only('switchboard disconnect', function (t) {
   })
 
   switchboards.forEach(function (sender, i) {
+    var myName = names[i]
     names.forEach(function (receiver, j) {
       if (i === j) return
 
@@ -565,11 +622,11 @@ test.only('switchboard disconnect', function (t) {
         if (!msg) return
 
         sender.send(receiver, msg, function (err) {
-          console.log('delivered')
           if (err) {
             toSend.unshift(msg)
-            console.log(names[i], 'resending to', names[j], err, toSend.length)
+            console.log(myName, 'resending to', names[j], err, toSend.length)
           } else {
+            delivered.from[myName].to[receiver].push(msg)
             if (!disconnected && !reconnected && toSend.length === 2) {
               process.nextTick(function () {
                 cliffJumper.emit('disconnect')
@@ -579,7 +636,7 @@ test.only('switchboard disconnect', function (t) {
               })
             }
 
-            t.pass(`${names[i]} delivered msg to ${receiver}, ${toSend.length} to go `)
+            // t.pass(`${names[i]} delivered msg to ${receiver}, ${toSend.length} to go `)
             finish() // delivered
           }
 
@@ -590,13 +647,25 @@ test.only('switchboard disconnect', function (t) {
   })
 
   function finish () {
-    if (--togo === 0) cleanup()
+    if (--togo === 0) {
+      names.forEach(function (me) {
+        names.forEach(function (them) {
+          if (me !== them) {
+            t.deepEqual(delivered.from[me].to[them], received.from[me].to[them])
+          }
+        })
+      })
+
+      cleanup()
+    }
   }
 
   function cleanup () {
     switchboards.forEach(function (s) {
       s.destroy()
     })
+
+    t.end()
   }
 
   // function newBadConnection (opts) {
