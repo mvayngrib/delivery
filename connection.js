@@ -148,7 +148,8 @@ var Connection = function (options) {
   Object.defineProperty(this, '_backedUp', {
     get: function () {
       return self._writeBuffer.reduce(function (total, data) {
-        return total + self._countRequiredPackets(data)
+        return total + data.length
+        // return total + self._countRequiredPackets(data)
       }, 0)
     }
   })
@@ -239,20 +240,60 @@ Connection.prototype.send = function (data, ondelivered) {
   this.resume()
 
   data = utils.toBuffer(data)
-  var packetsToGo = this._countRequiredPackets(data)
+  // var packetsToGo = this._countRequiredPackets(data)
 
   this._msgQueue.push([data, ondelivered]) // normalized args
 
   // register callback for ack for last piece
-  var ackIdx = this._seq + packetsToGo + this._backedUp - 1
+  // var ackIdx = this._seq + packetsToGo + this._backedUp - 1
   // this._debug('scheduling callback for ack of ' + ackIdx)//(ackIdx & BUFFER_SIZE))
-  this._deliveryCallbacks.put(ackIdx, function (err) {
+
+  var ackIdx = this._seq % BUFFER_SIZE + Math.ceil((this._backedUp + data.length) / this._mtu) - 1
+
+  this._putDeliveryCallback(ackIdx, function (err) {
     var args = self._msgQueue.shift()
     if (args[1]) args[1](err)
   })
 
   this._bufferData(data)
   this._flush()
+}
+
+Connection.prototype._putDeliveryCallback = function (idx, fn) {
+  var rounds = Math.ceil(idx / BUFFER_SIZE)
+  if (rounds !== rounds | 0) rounds++
+
+  fn._sendyIdx = rounds
+  var cbs = this._deliveryCallbacks.get(idx) || []
+  cbs.push(fn)
+  this._deliveryCallbacks.put(idx, cbs)
+}
+
+Connection.prototype._callDeliveryCallbacks = function (idx) {
+  var cbs = this._deliveryCallbacks.get(idx)
+  if (!cbs) return
+
+  var l = cbs.length
+  var callNow = []
+  var callLater = []
+  for (var i = 0; i < l; i++) {
+    var fn = cbs[i]
+    fn._sendyIdx--
+    if (fn._sendyIdx === 0) {
+      callNow.push(fn)
+    } else {
+      callLater.push(fn)
+    }
+  }
+
+  if (callLater.length === 0) this._deliveryCallbacks.del(idx)
+  else this._deliveryCallbacks.put(callLater)
+
+  if (!callNow.length) return
+
+  process.nextTick(function () {
+    callNow.forEach(call)
+  })
 }
 
 Connection.prototype._flush = function () {
@@ -327,14 +368,15 @@ Connection.prototype._recvAck = function (ack) {
   for (var i = 0; i < acked; i++) {
     var seq = offset + i
     var packet = this._outgoing.del(seq)
-    var cb = this._deliveryCallbacks.del(seq)
-    if (cb) {
-      try {
-        cb()
-      } catch (err) {
-        this._debug('callback failed', err)
-      }
-    }
+    this._callDeliveryCallbacks(seq)
+    // var cb = this._deliveryCallbacks.del(seq)
+    // if (cb) {
+    //   try {
+    //     cb()
+    //   } catch (err) {
+    //     this._debug('callback failed', err)
+    //   }
+    // }
 
     if (packet) {
       this._inflightPackets--
@@ -354,12 +396,17 @@ Connection.prototype._recvAck = function (ack) {
 // }
 
 Connection.prototype._cancelPending = function (err) {
+  debugger
   err = err || new Error('connection was reset')
-  var cbs = this._deliveryCallbacks.values.slice()
+  var cbArrays = this._deliveryCallbacks.values.slice()
   this._deliveryCallbacks = cyclist(BUFFER_SIZE)
 
-  cbs.forEach(function (fn) {
-    if (fn) fn(err)
+  cbArrays.forEach(function (arr) {
+    if (arr) {
+      arr.forEach(function (fn) {
+        fn(err)
+      })
+    }
   })
 }
 
@@ -619,3 +666,7 @@ Connection.prototype.isPaused = function () {
 exports.packetToBuffer = packetToBuffer
 exports.bufferToPacket = bufferToPacket
 exports.Connection = module.exports = Connection
+
+function call (fn) {
+  fn()
+}

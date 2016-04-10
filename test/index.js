@@ -432,9 +432,9 @@ test('switchboard', function (t) {
   })
 })
 
-test('switchboard disconnect', function (t) {
+test.only('switchboard disconnect', function (t) {
   // t.timeoutAfter(5000)
-  var names = ['a', 'b', 'c']
+  var names = ['a', 'b', 'c'].slice(0, 2)
   var blocked = {}
   // var waitForTimeout
   // var waitedForTimeout
@@ -476,6 +476,7 @@ test('switchboard disconnect', function (t) {
     }
 
     ee.on('disconnect', function () {
+      debugger
       switchboards[i].cancelPending()
     })
 
@@ -484,7 +485,7 @@ test('switchboard disconnect', function (t) {
 
   var cliffJumper = unreliables[0]
   var msgs = ['hey'.repeat(5e5), 'ho', 'blah!'.repeat(1234), 'booyah'.repeat(4321), 'ooga']
-  // var msgs = ['hey', 'ho', 'blah!', 'booyah', 'ooga']
+  // var msgs = ['hey'.repeat(20000)]//, 'ho'.repeat(100), 'blah!', 'booyah', 'ooga']
   var togo = msgs.length * names.length * (names.length - 1) // send and receive
   t.plan(togo)
 
@@ -518,25 +519,26 @@ test('switchboard disconnect', function (t) {
       // }, 5000).unref()
     })
 
-    // s.on('message', function (msg, from) {
-    //   msg = msg.toString()
-    //   if (prev[from] === msg) {
-    //     console.log('discarding duplicate')
-    //     return
-    //   }
+    s.on('message', function (msg, from) {
+      console.log('received')
+      // msg = msg.toString()
+      // if (prev[from] === msg) {
+      //   console.log('discarding duplicate')
+      //   return
+      // }
 
-    //   received++
+      // received++
 
-    //   t.equal(msg, toRecv[from].shift())
-    //   console.log(name, 'received from', from, ',', toRecv[from].length, 'togo')
-    //   prev[from] = msg
+      // t.equal(msg, toRecv[from].shift())
+      // console.log(name, 'received from', from, ',', toRecv[from].length, 'togo')
+      // prev[from] = msg
 
-    //   // if (name === cliffJumper && !waitedForTimeout) waitForTimeout = true
+      // // if (name === cliffJumper && !waitedForTimeout) waitForTimeout = true
 
-    //   finish()
+      // finish()
 
-    //   // blocked[from] = true
-    // })
+      // blocked[from] = true
+    })
 
     // s.on('timeout', function (recipient) {
     //   t.comment('forced timeout')
@@ -563,6 +565,7 @@ test('switchboard disconnect', function (t) {
         if (!msg) return
 
         sender.send(receiver, msg, function (err) {
+          console.log('delivered')
           if (err) {
             toSend.unshift(msg)
             console.log(names[i], 'resending to', names[j], err, toSend.length)
