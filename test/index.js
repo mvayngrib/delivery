@@ -390,7 +390,6 @@ test('pause/resume', function (t) {
 
   function finish () {
     if (!pausedEver) {
-      console.log('paused')
       pausedEver = paused = true
       a.pause()
       b.pause()

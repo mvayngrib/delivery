@@ -193,7 +193,7 @@ proto._getReliableClientFor = function (recipient) {
   rclient.on('send', function (msg) {
     if (self._destroyed) return
 
-    // debug('sending msg to ' + recipient + ', length: ' + msg.length)
+    debug('sending msg to ' + recipient + ', length: ' + msg.length)
     msg = self._encode(msg, recipient)
     self._uclient.send(msg)
   }),
