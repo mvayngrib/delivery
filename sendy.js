@@ -30,7 +30,9 @@ function LengthPrefixed (opts) {
   })
 
   this._client.on('receive', function (lengthPrefixedData) {
-    self._decoder.write(lengthPrefixedData)
+    process.nextTick(function () {
+      self._decoder.write(lengthPrefixedData)
+    })
   })
 
   this._onDecoded = this._onDecoded.bind(this)
