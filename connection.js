@@ -247,7 +247,7 @@ Connection.prototype.send = function (data, ondelivered) {
   var packetsTogo = Math.ceil(bytesQueued / this._mtu)
   this._putDeliveryCallback(packetsTogo, function (err) {
     var args = self._msgQueue.shift()
-    if (args[1]) args[1](err)
+    if (args && args[1]) args[1](err)
   })
 
   this._bufferData(data)
