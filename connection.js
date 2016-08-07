@@ -366,9 +366,10 @@ Connection.prototype._recvAck = function (ack) {
     this._callDeliveryCallbacks(seq)
     if (packet) {
       this._inflightPackets--
-    } else {
-      console.log(this._id, 'boo', seq)
     }
+    // else {
+    //   console.log(this._id, 'boo', seq)
+    // }
   }
 
   if (!this._inflightPackets) {

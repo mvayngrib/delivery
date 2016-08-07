@@ -158,6 +158,11 @@ proto.cancelPending = function (recipient) {
   }
 }
 
+proto.pending = function (recipient) {
+  const q = this._queued[recipient]
+  return q ? q.slice() : []
+}
+
 proto.clients = function () {
   return Object.keys(this._rclients).map(function (k) {
     return this._rclients[k]
