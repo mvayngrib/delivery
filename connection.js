@@ -349,6 +349,7 @@ Connection.prototype._resend = function () {
 }
 
 Connection.prototype._keepAlive = function () {
+  if (this._paused) return
   if (this._alive) return this._alive = false
   this._sendAck()
 }

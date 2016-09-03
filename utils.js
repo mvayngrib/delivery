@@ -26,11 +26,11 @@ exports.connect = function connect (/* pipeline */) {
       return next.receive.apply(next, arguments)
     }
 
-    if (!prev.pause) prev.pause = next.pause
-    if (!prev.resume) prev.resume = next.resume
+    if (!prev.pause) prev.pause = next.pause.bind(next)
+    if (!prev.resume) prev.resume = next.resume.bind(next)
     if (!prev.setTimeout && !prev.clearTimeout) {
-      prev.setTimeout = next.setTimeout
-      prev.clearTimeout = next.clearTimeout
+      prev.setTimeout = next.setTimeout.bind(next)
+      prev.clearTimeout = next.clearTimeout.bind(next)
     }
   }, top)
 }
