@@ -430,10 +430,13 @@ Connection.prototype._reset = function (resend) {
   // this._backedUp = 0
   // this._synack = null
 
-  if (msgs) {
+  if (msgs && msgs.length) {
     msgs.forEach(function (args) {
       this.send.apply(this, args)
     }, this)
+  } else if (resend) {
+    // other party expects a SYN from us
+    this._sendSyn()
   }
 }
 
