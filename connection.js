@@ -508,7 +508,7 @@ Connection.prototype._finishConnecting = function (packet) {
 
   if (!this._isPacketForThisConnection(packet)) {
     this._debug('1. ignoring ' + packetType(packet) + ' with a different connection id', this._recvId, packet.connection)
-    return
+    return false
   }
 
   var isInitiator = this._sendId > this._recvId
@@ -560,8 +560,8 @@ Connection.prototype.receive = function (buffer) {
   }
 
   if (this._connecting) {
-    this._resetTimeout()
-    this._finishConnecting(packet)
+    var received = this._finishConnecting(packet)
+    if (received !== false) this._resetTimeout()
     if (this._connecting) return
   }
 
@@ -659,9 +659,10 @@ Connection.prototype.isPaused = function () {
   return this._paused
 }
 
+exports = module.exports = Connection
+exports.Connection = Connection
 exports.packetToBuffer = packetToBuffer
 exports.bufferToPacket = bufferToPacket
-exports.Connection = module.exports = Connection
 
 function call (fn) {
   fn()
