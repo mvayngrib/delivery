@@ -430,13 +430,22 @@ Connection.prototype._reset = function (resend) {
   // this._backedUp = 0
   // this._synack = null
 
+  if (!resend) return
+
   if (msgs && msgs.length) {
     msgs.forEach(function (args) {
       this.send.apply(this, args)
     }, this)
-  } else if (resend) {
+  } else {
     // other party expects a SYN from us
     this._sendSyn()
+  }
+}
+
+Connection.prototype._resetTimeout = function () {
+  this._lastReceivedTimestamp = Date.now()
+  if ('_idleTimeout' in this) {
+    this.setTimeout(this._idleTimeoutMillis)
   }
 }
 
@@ -544,11 +553,6 @@ Connection.prototype.receive = function (buffer) {
   var packet = Buffer.isBuffer(buffer) ? bufferToPacket(buffer) : buffer
   // this._debug('connected: ' + (!this._connecting) + '\n    received: ' + packetType(packet) + '\n    with seq: ' + packet.seq + '\n    and ack: ' + packet.ack)
 
-  this._lastReceivedTimestamp = Date.now()
-  if ('_idleTimeout' in this) {
-    this.setTimeout(this._idleTimeoutMillis)
-  }
-
   if (packet.id === PACKET_RESET) {
     this._debug('resetting due to received RESET packet')
     return this._reset(true)
@@ -556,6 +560,7 @@ Connection.prototype.receive = function (buffer) {
   }
 
   if (this._connecting) {
+    this._resetTimeout()
     this._finishConnecting(packet)
     if (this._connecting) return
   }
@@ -586,6 +591,7 @@ Connection.prototype.receive = function (buffer) {
     return
   }
 
+  this._resetTimeout()
   this._recvAck(packet.ack)
   if (packet.id === PACKET_STATE) return
 
