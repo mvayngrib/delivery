@@ -2,6 +2,7 @@ var cyclist = require('cyclist')
 var util = require('util')
 var EventEmitter = require('events').EventEmitter
 var debug = require('debug')('sendy-connection')
+var reemit = require('re-emitter')
 var BitArray = require('./bit-array')
 var utils = require('./utils')
 
@@ -115,8 +116,11 @@ var nonRepeatRandom = function () {
   return rand
 }
 
+var noop = function () {}
 var CID = 0
-var Connection = function (options) {
+var CONNECTIONS = {}
+
+function Connection (options, syn) {
   var self = this
   options = options || {}
 
@@ -128,17 +132,26 @@ var Connection = function (options) {
 
   this.setMaxListeners(0)
   this._id = CID++
-  this._reset()
+  this._paused = false
+  this._msgQueue = []
+  this._writeBuffer = []
+  this._deliveryCallbacks = cyclist(BUFFER_SIZE)
+  this._outgoing = cyclist(BUFFER_SIZE)
+  this._incoming = cyclist(BUFFER_SIZE)
+
+  this._inflightPackets = 0
+  this._alive = false
 
   var resend = setInterval(this._resend.bind(this), resendInterval)
   var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInterval)
 
-  this.once('destroy', function () {
-    self._debug('destroyed')
+  this.once('close', function () {
+    self._debug('closed')
     clearInterval(resend)
     clearInterval(keepAlive)
     self.clearTimeout()
     self._cancelPending()
+    delete CONNECTIONS[self._id]
   })
 
   ;['connect', 'resume', 'flush'].forEach(function (event) {
@@ -153,6 +166,25 @@ var Connection = function (options) {
       }, 0)
     }
   })
+
+  this._initiator = !syn
+  if (this._initiator) {
+    this._connecting = true
+    this._recvId = nonRepeatRandom()
+    this._sendId = uint16(this._recvId + 1)
+    this._seq = (Math.random() * UINT16) | 0
+    this._ack = 0
+    this._sendOutgoing(createPacket(this, PACKET_SYN, null))
+  } else {
+    this._recvId = uint16(syn.connection+1)
+    this._sendId = syn.connection
+    this._seq = (Math.random() * UINT16) | 0
+    this._ack = syn.seq
+    this._sendAck()
+    this._onconnected()
+  }
+
+  // this._debug('created new ' + (this._initiator ? 'outbound' : 'inbound') + ' connection', ', sendId: ' + this._sendId, ', recvId: ' + this._recvId)
 }
 
 Connection.MTU = MTU
@@ -194,48 +226,30 @@ Connection.prototype.clearTimeout = function () {
   delete this._idleTimeoutMillis
 }
 
-// Connection.prototype.close = function (cb) {
-//   // close nicely
-//   var self = this
-
-//   if (this._closing) throw new Error('closing')
-
-//   this._closing = true
-//   this._closeCB = closeCB
-//   if (!this._inflightPackets) return closeCB()
-
-//   this._debug('closing, ' + this._inflightPackets + ' in flight')
-//   setTimeout(closeCB, CLOSE_GRACE)
-
-//   function closeCB () {
-//     if (self._destroyed) return
-//     if (cb) cb()
-
-//     self.destroy()
-//   }
-// }
-
+Connection.prototype.close =
 Connection.prototype.destroy = function () {
-  if (this._destroyed) throw new Error('destroyed')
+  if (this._closed) throw new Error('closed')
 
-  this._destroyed = true
-  this.emit('destroy')
+  this._debug('closing')
+  this.clearTimeout()
+  this._closed = true
+  this.emit('close')
 }
 
-Connection.prototype._sendSyn = function () {
-  if (this._syn) return this._transmit(this._syn)
+// Connection.prototype._sendSyn = function () {
+//   if (this._syn) return this._transmit(this._syn)
 
-  this._recvId = nonRepeatRandom()
-  this._sendId = uint16(this._recvId + 1)
-  this._connId = this._recvId
-  this._syn = createPacket(this, PACKET_SYN, null)
-  this._sendOutgoing(this._syn)
-}
+//   this._recvId = nonRepeatRandom()
+//   this._sendId = uint16(this._recvId + 1)
+//   this._connId = this._recvId
+//   this._syn = createPacket(this, PACKET_SYN, null)
+//   this._sendOutgoing(this._syn)
+// }
 
 Connection.prototype.send = function (data, ondelivered) {
   var self = this
-  if (this._destroyed) return
-  if (!this._recvId) this._sendSyn()
+  if (this._closed) return
+  // if (!this._recvId) this._sendSyn()
 
   this.resume()
 
@@ -397,51 +411,6 @@ Connection.prototype._cancelPending = function (err) {
   })
 }
 
-Connection.prototype._reset = function (resend) {
-  var self = this
-
-  this._debug('reset, resend: ' + (!!resend))
-  if (this._msgQueue) {
-    this._debug('resetting')
-    this.emit('reset')
-  }
-
-  var msgs = resend && this._msgQueue && this._msgQueue.slice()
-
-  this._paused = false
-  this._msgQueue = []
-  this._writeBuffer = []
-  this._deliveryCallbacks = cyclist(BUFFER_SIZE)
-  this._outgoing = cyclist(BUFFER_SIZE)
-  this._incoming = cyclist(BUFFER_SIZE)
-
-  this._inflightPackets = 0
-  this._alive = false
-
-  this._connecting = true
-  this._connId = null
-  this._recvId = null // tmp value for v8 opt
-  this._sendId = null // tmp value for v8 opt
-  this._ack = null
-  // this._old = 0 // num old packets received in a row
-  this._seq = this._id ? 105 : 372 //(Math.random() * UINT16) | 0
-  this._syn = null
-  this._theirSyn = null
-  // this._backedUp = 0
-  // this._synack = null
-
-  if (!resend) return
-
-  if (msgs && msgs.length) {
-    msgs.forEach(function (args) {
-      this.send.apply(this, args)
-    }, this)
-  } else {
-    // other party expects a SYN from us
-    this._sendSyn()
-  }
-}
-
 Connection.prototype._resetTimeout = function () {
   this._lastReceivedTimestamp = Date.now()
   if ('_idleTimeout' in this) {
@@ -453,145 +422,34 @@ Connection.prototype._millisSinceLastReceived = function () {
   return Date.now() - (this._lastReceivedTimestamp || 0)
 }
 
-Connection.prototype._finishConnecting = function (packet) {
+Connection.prototype.receive = function (packet) {
+  this._resetTimeout()
+  // this._debug('received ' + packetType(packet), ', connection:', packet.connection)
   if (packet.id === PACKET_SYN) {
-    if (this._theirSyn && this._theirSyn.connection === packet.connection) {
-      return this._sendAck()
+    if (this._initiator) {
+      return this._transmit(createPacket(this, PACKET_RESET))
     }
 
-    // our conn id should win
-    // ignore their syn and keep resending ours
-    if (this._syn && this._recvId > packet.connection) {
-      this._debug('our conn wins')
-      return
-    }
-
-    if (this._recvId === packet.connection) {
-      this._debug('resetting due to connection id collision')
-      this._reset(true)
-      // this._sendAck()
-      return
-    }
-
-    // their conn id won
-    this._debug('their conn wins')
-    var msgs
-    if (this._syn) {
-      msgs = this._msgQueue.slice()
-      this._reset()
-      // this._cancelPacket(this._syn)
-    }
-
-    this._recvId = uint16(packet.connection + 1)
-    this._sendId = packet.connection
-    this._connId = this._sendId
-    this._ack = uint16(packet.seq)
-    this._theirSyn = packet
-    this._syn = null
     this._sendAck()
-    if (msgs) {
-      // debugger
-      msgs.forEach(function (args) {
-        this.send.apply(this, args)
-      }, this)
-    }
-
-    return
+    return;
   }
-
-  if (!this._recvId) {
-    // this._debug('expected SYN, got ' + packetType(packet) + ', sending own SYN')
-    this._debug('expected SYN, got ' + packetType(packet) + ', sending RESET')
-    return this._transmit(createPacket(this, PACKET_RESET))
-    // return this._sendSyn()
-  }
-
-  if (!this._isPacketForThisConnection(packet)) {
-    this._debug('1. ignoring ' + packetType(packet) + ' with a different connection id', this._recvId, packet.connection)
-    return false
-  }
-
-  var isInitiator = this._sendId > this._recvId
-  if (!isInitiator) {
-    if (this._ack === null) {
-      this._ack = packet.seq - 1
-    }
-
-    return this._onconnected()
-  }
-
-  if (packet.id === PACKET_STATE) {
-    var ackedPacket = this._outgoing.get(packet.ack)
-    if (!ackedPacket || ackedPacket.id !== PACKET_SYN) return
-
-    this._ack = uint16(packet.seq - 1)
-    this._recvAck(packet.ack)
-    // this._sendAck()
-    // this._incoming.del(packet.seq)
-    return this._onconnected()
-  }
-}
-
-Connection.prototype._isPacketForThisConnection = function (packet) {
-  if (packet.id === PACKET_SYN) {
-    return this._theirSyn && packet.connection === this._theirSyn.connection
-  }
-
-  return packet.connection === this._recvId
-}
-
-Connection.prototype.receive = function (buffer) {
-  var self = this
-  if (this._destroyed) {
-    this._debug('cannot receive, am destroyed')
-    return
-  }
-
-  // we might be paused
-  this.resume()
-
-  var packet = Buffer.isBuffer(buffer) ? bufferToPacket(buffer) : buffer
-  // this._debug('connected: ' + (!this._connecting) + '\n    received: ' + packetType(packet) + '\n    with seq: ' + packet.seq + '\n    and ack: ' + packet.ack)
 
   if (packet.id === PACKET_RESET) {
-    this._debug('resetting due to received RESET packet')
-    return this._reset(true)
-  // return this.destroy()
+    this.close()
+    return
   }
 
   if (this._connecting) {
-    var received = this._finishConnecting(packet)
-    if (received !== false) this._resetTimeout()
-    if (this._connecting) return
+    if (packet.id !== PACKET_STATE) return //this._incoming.put(packet.seq, packet)
+
+    this._ack = uint16(packet.seq-1)
+    this._recvAck(packet.ack)
+    this._onconnected()
+
+    packet = this._incoming.del(packet.seq)
+    if (!packet) return
   }
 
-  if (packet.id === PACKET_SYN) {
-    if (packet.connection !== this._connId) {
-      this._debug('resetting due to new SYN received')
-      // var queued = this._msgQueue.slice()
-      this._reset(true)
-      return this.receive(packet)
-      // return queued.forEach(function (args) {
-      //   self.send.apply(self, args)
-      // })
-    } else {
-      // ignore it
-      return
-
-    // // we're on the same connection
-    // // ack the syn
-    // var ack = createPacket(this, PACKET_STATE, null)
-    // ack.ack = packet.seq
-    // return this._transmit(ack)
-    }
-  }
-
-  if (!this._isPacketForThisConnection(packet)) {
-    this._debug('2. ignoring ' + packetType(packet) + ' with a different connection id')
-    return
-  }
-
-  this._resetTimeout()
   this._recvAck(packet.ack)
   if (packet.id === PACKET_STATE) return
 
@@ -601,7 +459,6 @@ Connection.prototype.receive = function (buffer) {
   }
 
   this._incoming.put(packet.seq, packet)
-
   while (packet = this._incoming.del(this._ack + 1)) {
     this._ack = uint16(this._ack + 1)
     if (packet.id === PACKET_DATA) {
@@ -609,7 +466,7 @@ Connection.prototype.receive = function (buffer) {
     }
 
     if (packet.id === PACKET_FIN) {
-      return this.destroy()
+      return this.close()
     }
   }
 
@@ -639,7 +496,7 @@ Connection.prototype._transmit = function (packet) {
   packet.sent = packet.sent === 0 ? packet.timestamp : timestamp()
   var message = packetToBuffer(packet)
   this._alive = true
-  // this._debug('sending ' + packetType(packet), packet.seq, ', acking ' + packet.ack)
+  // this._debug('sending ' + packetType(packet), 'seq:', packet.seq, ', ack:', packet.ack, ', connection:', packet.connection)
   this.emit('send', message)
 }
 
@@ -659,11 +516,241 @@ Connection.prototype.isPaused = function () {
   return this._paused
 }
 
-exports = module.exports = Connection
+function Server (opts) {
+  if (!(this instanceof Server)) return new Server(opts)
+
+  EventEmitter.call(this)
+  this._connections = {}
+  this._opts = opts
+}
+
+util.inherits(Server, EventEmitter)
+
+Server.prototype.receive = function (message) {
+  if (message.length < MIN_PACKET_SIZE) return
+
+  var packet = Buffer.isBuffer(message) ? bufferToPacket(message) : message
+  if (this._closed && packet.id !== PACKET_FIN && packet.id !== PACKET_STATE) {
+    return
+  }
+
+  var connections = this._connections
+  var id = packet.id === PACKET_SYN ? uint16(packet.connection+1) : packet.connection
+  var conn = connections[id]
+  if (conn) return conn.receive(packet)
+  if (packet.id !== PACKET_SYN) {
+    if (packet.id !== PACKET_RESET) {
+      // we don't know whether we were the initiator
+      // of this lost connection, so send 2 reset packets
+      // if we were the initiator, our sendId = packet.connection + 1
+      // if we were the receiver, our sendId = packet.connection
+
+      [packet.connection, packet.connection + 1].forEach(function (sendId) {
+        var reset = createPacket({
+          _sendId: sendId,
+          seq: 0,
+          ack: 0
+        }, PACKET_RESET)
+
+        this.emit('send', packetToBuffer(reset))
+      }, this)
+    }
+
+    return
+  }
+
+  conn = connections[id] = new Connection(this._opts, packet)
+
+  conn.once('close', function() {
+    delete connections[id]
+  })
+
+  this.emit('connection', conn)
+  reemit(conn, this, ['send', 'receive'])
+}
+
+// Server.prototype._reset = function (resend) {
+//   for (var id in this._connections) {
+//     this._connections[id].destroy(resend)
+//   }
+// }
+
+Server.prototype.close =
+Server.prototype.destroy = function () {
+  if (this._closed) return
+
+  this._closed = true
+  var conns = this._connections
+  for (var id in this._connections) {
+    conns[id].close()
+  }
+
+  debug('closing server')
+  this.emit('close')
+}
+
+function SymmetricClient (opts) {
+  EventEmitter.call(this)
+  this._opts = opts
+  this._reset()
+}
+
+util.inherits(SymmetricClient, EventEmitter)
+
+SymmetricClient.prototype._reset = function (resend) {
+  var q = resend && this._queue && this._queue.slice()
+  var inbound = this._inbound
+  if (inbound) {
+    inbound.close()
+    inbound.removeAllListeners()
+  }
+
+  var outbound = this._outbound
+  if (outbound) {
+    outbound.close()
+    outbound.removeAllListeners()
+  } else {
+    this._createOutboundConnection()
+  }
+
+  this._inbound = new Server(this._opts)
+  reemit(this._inbound, this, ['send', 'receive'])
+
+  this._queue = []
+  if (q) {
+    q.forEach(function (args) {
+      this.send.apply(this, args)
+    }, this)
+  }
+
+  // if (this._inbound) this._inbound.close()
+  // if (this._outbound) this._outbound.close()
+
+  // var queued = this._queue ? this._queue.slice() : []
+  // this._queue = []
+  // this._inbound = new Server(this._opts)
+  // reemit(this._inbound, this, ['send', 'receive'])
+
+  // this._outbound = new Connection(this._opts)
+  // reemit(this._outbound, this, ['send', 'receive'])
+
+  // if (resend) {
+  //   queue.forEach(function (msg) {
+  //     self.send(msg)
+  //   })
+  // }
+}
+
+SymmetricClient.prototype._createOutboundConnection = function () {
+  var self = this
+  this._outbound = new Connection(this._opts)
+  this._outbound.once('close', function () {
+    if (!self._closed) {
+      self._createOutboundConnection()
+    }
+  })
+
+  reemit(this._outbound, this, ['send', 'receive', 'timeout', 'pause', 'resume'])
+}
+
+SymmetricClient.prototype.receive = function (message) {
+  var packet = bufferToPacket(message)
+  // console.log(packet.connection, this._outbound._recvId, this._outbound._sendId, packet.id)
+  // if (packet.connection === this._outbound._recvId) {
+  //   console.log('equals recvId')
+  // }
+
+  // if (packet.connection === this._outbound._sendId) {
+  //   console.log('equals sendId')
+  // }
+
+  if (
+    packet.connection === this._outbound._recvId ||
+    (packet.id === PACKET_RESET && packet.connection === this._outbound._sendId)
+  ) {
+    this._outbound.receive(packet)
+  } else {
+    this._inbound.receive(packet)
+  }
+}
+
+SymmetricClient.prototype.send = function (message, ondelivered) {
+  var self = this
+  ondelivered = ondelivered || noop
+
+  this._queue.push([message, ondelivered])
+  this._outbound.send(message, wrapper)
+
+  function wrapper (err) {
+    if (self._closed) return
+
+    self._queue.shift()
+    if (err) {
+      // requeue
+      process.nextTick(function () {
+        self.send(message, ondelivered)
+      })
+    } else {
+      ondelivered(err)
+    }
+  }
+}
+
+SymmetricClient.prototype.close =
+SymmetricClient.prototype.destroy = function () {
+  if (this._closed) return
+
+  debug('closing symmetric client')
+  this._closed = true
+  this._inbound.close()
+  this._outbound.close()
+}
+
+SymmetricClient.prototype.setTimeout = function (millis) {
+  this._outbound.setTimeout(millis)
+}
+
+SymmetricClient.prototype.clearTimeout = function () {
+  this._outbound.clearTimeout()
+}
+
+SymmetricClient.prototype.pause = function () {
+  this._outbound.pause()
+}
+
+SymmetricClient.prototype.resume = function () {
+  this._outbound.resume()
+}
+
+SymmetricClient.prototype.isPaused = function () {
+  return this._outbound.isPaused()
+}
+
+exports = module.exports = SymmetricClient
 exports.Connection = Connection
+exports.Server = Server
+exports.createServer = Server
 exports.packetToBuffer = packetToBuffer
 exports.bufferToPacket = bufferToPacket
+// exports.CONNECTIONS = CONNECTIONS
 
 function call (fn) {
   fn()
 }
+
+// function oneTickClose (emitter, cb) {
+//   cb = cb || noop
+
+//   if (emitter._closed) return process.nextTick(cb)
+
+//   emitter.once('close', cb)
+//   if (emitter._closing) return
+
+//   emitter._closing = true
+//   process.nextTick(function () {
+//     emitter._closed = true
+//     emitter.emit('close')
+//   })
+
+//   return true
+// }

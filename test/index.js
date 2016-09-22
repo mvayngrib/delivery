@@ -478,6 +478,7 @@ test('switchboard', function (t) {
 
 test('switchboard disconnect', function (t) {
   // t.timeoutAfter(5000)
+  // setInterval(WHY, 10000)
   var names = ['a', 'b', 'c'].slice(0, 2)
   var blocked = {}
   // var waitForTimeout
@@ -680,19 +681,26 @@ test('switchboard disconnect', function (t) {
   // }
 })
 
+// test('ensure close', function (t) {
+//   t.end()
+//   setTimeout(function () {
+//     process.exit(1)
+//   }, 1000).unref()
+// })
+
+// setInterval(WHY, 10000).unref()
+
 function createFaultyConnection (a, b, filter) {
   ;[a, b].forEach(me => {
     other = me === a ? b : a
-    other.on('send', msg => {
-      if (filter(msg)) {
-        process.nextTick(() => {
-          if (!(me.isPaused && me.isPaused())) {
-            me.receive(msg)
-          }
-        })
-      } else {
-        // debugger
-      }
+    other.on('send', function (msg) {
+      if (!filter(msg)) return
+
+      process.nextTick(() => {
+        if (!me.isPaused()) {
+          me.receive(msg)
+        }
+      })
     })
   })
 }
