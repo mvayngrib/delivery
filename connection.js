@@ -208,9 +208,16 @@ Connection.prototype.setTimeout = function(millis, cb) {
   if (!millis) return
 
   this._idleTimeoutMillis = millis
+  // if (this._connecting) {
+  //   return this.once('connect', this.setTimeout.bind(this, millis, cb))
+  // }
+
   this._idleTimeout = setTimeout(function () {
-    self.clearTimeout()
-    self.emit('timeout', millis)
+    if (self.listenerCount('timeout')) {
+      self.emit('timeout', millis)
+    } else {
+      self.close()
+    }
   }, millis)
 
   if (this._idleTimeout.unref) {
@@ -236,20 +243,9 @@ Connection.prototype.destroy = function () {
   this.emit('close')
 }
 
-// Connection.prototype._sendSyn = function () {
-//   if (this._syn) return this._transmit(this._syn)
-
-//   this._recvId = nonRepeatRandom()
-//   this._sendId = uint16(this._recvId + 1)
-//   this._connId = this._recvId
-//   this._syn = createPacket(this, PACKET_SYN, null)
-//   this._sendOutgoing(this._syn)
-// }
-
 Connection.prototype.send = function (data, ondelivered) {
   var self = this
   if (this._closed) return
-  // if (!this._recvId) this._sendSyn()
 
   this.resume()
 
@@ -560,6 +556,9 @@ Server.prototype.receive = function (message) {
   }
 
   conn = connections[id] = new Connection(this._opts, packet)
+  if (this._timeoutMillis) {
+    conn.setTimeout(this._timeoutMillis)
+  }
 
   conn.once('close', function() {
     delete connections[id]
@@ -589,6 +588,13 @@ Server.prototype.destroy = function () {
   this.emit('close')
 }
 
+Server.prototype.setTimeout = function (millis) {
+  this._timeoutMillis = millis
+  Object.keys(this._connections).forEach(function (id) {
+    this._connections[id].setTimeout(millis)
+  }, this)
+}
+
 function SymmetricClient (opts) {
   EventEmitter.call(this)
   this._opts = opts
@@ -609,12 +615,10 @@ SymmetricClient.prototype._reset = function (resend) {
   if (outbound) {
     outbound.close()
     outbound.removeAllListeners()
-  } else {
-    this._createOutboundConnection()
   }
 
   this._inbound = new Server(this._opts)
-  reemit(this._inbound, this, ['send', 'receive'])
+  reemit(this._inbound, this, ['send', 'receive', 'connection'])
 
   this._queue = []
   if (q) {
@@ -651,6 +655,9 @@ SymmetricClient.prototype._createOutboundConnection = function () {
   })
 
   reemit(this._outbound, this, ['send', 'receive', 'timeout', 'pause', 'resume'])
+  if (this._timeoutMillis) {
+    this._outbound.setTimeout(this._timeoutMillis)
+  }
 }
 
 SymmetricClient.prototype.receive = function (message) {
@@ -664,10 +671,15 @@ SymmetricClient.prototype.receive = function (message) {
   //   console.log('equals sendId')
   // }
 
-  if (
-    packet.connection === this._outbound._recvId ||
-    (packet.id === PACKET_RESET && packet.connection === this._outbound._sendId)
-  ) {
+  var isForOutbound
+  if (this._outbound) {
+    isForOutbound = (
+      packet.connection === this._outbound._recvId ||
+      (packet.id === PACKET_RESET && packet.connection === this._outbound._sendId)
+    )
+  }
+
+  if (isForOutbound) {
     this._outbound.receive(packet)
   } else {
     this._inbound.receive(packet)
@@ -679,6 +691,10 @@ SymmetricClient.prototype.send = function (message, ondelivered) {
   ondelivered = ondelivered || noop
 
   this._queue.push([message, ondelivered])
+  if (!this._outbound) {
+    this._createOutboundConnection()
+  }
+
   this._outbound.send(message, wrapper)
 
   function wrapper (err) {
@@ -703,27 +719,48 @@ SymmetricClient.prototype.destroy = function () {
   debug('closing symmetric client')
   this._closed = true
   this._inbound.close()
-  this._outbound.close()
+  if (this._outbound) {
+    this._outbound.close()
+  }
 }
 
 SymmetricClient.prototype.setTimeout = function (millis) {
-  this._outbound.setTimeout(millis)
+  this._timeoutMillis = millis
+  this._inbound.setTimeout(millis)
+  if (this._outbound) {
+    this._outbound.setTimeout(millis)
+  }
 }
 
 SymmetricClient.prototype.clearTimeout = function () {
-  this._outbound.clearTimeout()
+  this._inbound.clearTimeout()
+  if (this._outbound) {
+    this._outbound.clearTimeout()
+  }
 }
 
 SymmetricClient.prototype.pause = function () {
-  this._outbound.pause()
+  if (this._outbound) {
+    this._outbound.pause()
+  }
 }
 
 SymmetricClient.prototype.resume = function () {
-  this._outbound.resume()
+  if (this._outbound) {
+    this._outbound.resume()
+  }
 }
 
 SymmetricClient.prototype.isPaused = function () {
   return this._outbound.isPaused()
+}
+
+SymmetricClient.prototype.outboundConnection = function () {
+  return this._outbound
+}
+
+SymmetricClient.prototype.inboundConnections = function () {
+  return this._inbound.connections()
 }
 
 exports = module.exports = SymmetricClient
