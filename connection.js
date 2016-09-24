@@ -1,7 +1,7 @@
 var cyclist = require('cyclist')
 var util = require('util')
 var EventEmitter = require('events').EventEmitter
-var debug = require('debug')('sendy-connection')
+var debug = require('debug')('sendy')
 var reemit = require('re-emitter')
 var BitArray = require('./bit-array')
 var utils = require('./utils')
@@ -184,20 +184,21 @@ function Connection (options, syn) {
     this._onconnected()
   }
 
-  // this._debug('created new ' + (this._initiator ? 'outbound' : 'inbound') + ' connection', ', sendId: ' + this._sendId, ', recvId: ' + this._recvId)
+  this._debug('created new ' + (this._initiator ? 'outbound' : 'inbound') + ' connection')
 }
 
 Connection.MTU = MTU
 util.inherits(Connection, EventEmitter)
 
 Connection.prototype._onconnected = function () {
+  this._debug('connected')
   this._connecting = false
   this.emit('connect')
 }
 
 Connection.prototype._debug = function () {
   var args = [].slice.call(arguments)
-  args.unshift(this._id)
+  args.unshift('connection', this._id)
   return debug(args.join(' '))
 }
 
@@ -216,6 +217,7 @@ Connection.prototype.setTimeout = function(millis, cb) {
     if (self.listenerCount('timeout')) {
       self.emit('timeout', millis)
     } else {
+      self._debug('timed out')
       self.close()
     }
   }, millis)
@@ -431,6 +433,7 @@ Connection.prototype.receive = function (packet) {
   }
 
   if (packet.id === PACKET_RESET) {
+    this._debug('received RESET')
     this.close()
     return
   }
@@ -462,6 +465,7 @@ Connection.prototype.receive = function (packet) {
     }
 
     if (packet.id === PACKET_FIN) {
+      this._debug('received FIN')
       return this.close()
     }
   }
@@ -540,8 +544,8 @@ Server.prototype.receive = function (message) {
       // of this lost connection, so send 2 reset packets
       // if we were the initiator, our sendId = packet.connection + 1
       // if we were the receiver, our sendId = packet.connection
-
-      [packet.connection, packet.connection + 1].forEach(function (sendId) {
+      this._debug('received packet from non-existent connection, sending reset')
+      ;[packet.connection, packet.connection + 1].forEach(function (sendId) {
         var reset = createPacket({
           _sendId: sendId,
           seq: 0,
@@ -566,6 +570,12 @@ Server.prototype.receive = function (message) {
 
   this.emit('connection', conn)
   reemit(conn, this, ['send', 'receive'])
+}
+
+Server.prototype._debug = function () {
+  var args = [].slice.call(arguments)
+  args.unshift('server')
+  return debug(args.join(' '))
 }
 
 // Server.prototype._reset = function (resend) {
@@ -607,6 +617,7 @@ SymmetricClient.prototype._reset = function (resend) {
   var q = resend && this._queue && this._queue.slice()
   var inbound = this._inbound
   if (inbound) {
+    debug('resetting symmetric client')
     inbound.close()
     inbound.removeAllListeners()
   }
