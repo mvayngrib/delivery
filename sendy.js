@@ -5,7 +5,7 @@ var lps = require('length-prefixed-stream')
 var debug = require('debug')('sendy-messenger')
 var once = require('once')
 var utils = require('./utils')
-var Connection = require('./connection')
+var Symmetric = require('./connection')
 var UINT32 = 0xffffffff
 var COUNT_PROP = '_sendyCount'
 
@@ -16,7 +16,7 @@ function LengthPrefixed (opts) {
 
   EventEmitter.call(this)
 
-  this._client = opts.client || new Connection(opts)
+  this._client = opts.client || new Symmetric(opts)
   utils.connect(this, this._client)
 
   this._client.once('destroy', function () {
