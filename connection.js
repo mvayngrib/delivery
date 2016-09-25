@@ -419,7 +419,7 @@ Connection.prototype._resetTimeout = function () {
   }
 }
 
-Connection.prototype._millisSinceLastReceived = function () {
+Connection.prototype.idleTime = function () {
   return Date.now() - (this._lastReceivedTimestamp || 0)
 }
 
@@ -623,7 +623,6 @@ function SymmetricClient (opts) {
 util.inherits(SymmetricClient, EventEmitter)
 
 SymmetricClient.prototype._reset = function (resend) {
-  var q = resend && this._queue && this._queue.slice()
   var inbound = this._inbound
   if (inbound) {
     this._debug('resetting symmetric client')
@@ -632,7 +631,7 @@ SymmetricClient.prototype._reset = function (resend) {
   }
 
   var outbound = this._outbound
-  if (outbound) {
+  if (this._dedicatedOutbound) {
     outbound.close()
     outbound.removeAllListeners()
   }
@@ -640,38 +639,38 @@ SymmetricClient.prototype._reset = function (resend) {
   this._inbound = new Server(this._opts)
   reemit(this._inbound, this, ['send', 'receive', 'connection'])
 
-  this._queue = []
-  if (q) {
-    q.forEach(function (args) {
+  if (resend) {
+    this._resendPending()
+  } else {
+    this._pending = []
+  }
+}
+
+SymmetricClient.prototype._resendPending = function () {
+  var pending = this._pending && this._pending.slice()
+  this._pending = []
+  if (pending) {
+    pending.forEach(function (args) {
       this.send.apply(this, args)
     }, this)
   }
-
-  // if (this._inbound) this._inbound.close()
-  // if (this._outbound) this._outbound.close()
-
-  // var queued = this._queue ? this._queue.slice() : []
-  // this._queue = []
-  // this._inbound = new Server(this._opts)
-  // reemit(this._inbound, this, ['send', 'receive'])
-
-  // this._outbound = new Connection(this._opts)
-  // reemit(this._outbound, this, ['send', 'receive'])
-
-  // if (resend) {
-  //   queue.forEach(function (msg) {
-  //     self.send(msg)
-  //   })
-  // }
 }
 
 SymmetricClient.prototype._createOutboundConnection = function () {
   var self = this
+
+  this._dedicatedOutbound = true
+  // TODO: reuse existing inbound connection if possible
+
   this._outbound = new Connection(this._opts)
   this._outbound.once('close', function () {
-    if (!self._closed) {
-      self._createOutboundConnection()
-    }
+    if (self._closed) return
+
+    self._createOutboundConnection()
+    if (!self._pending.length) return
+
+    self._debug('resending pending')
+    self._resendPending()
   })
 
   reemit(this._outbound, this, ['send', 'receive', 'timeout', 'pause', 'resume'])
@@ -682,19 +681,11 @@ SymmetricClient.prototype._createOutboundConnection = function () {
 
 SymmetricClient.prototype.receive = function (message) {
   var packet = bufferToPacket(message)
-  // console.log(packet.connection, this._outbound._recvId, this._outbound._sendId, packet.id)
-  // if (packet.connection === this._outbound._recvId) {
-  //   console.log('equals recvId')
-  // }
-
-  // if (packet.connection === this._outbound._sendId) {
-  //   console.log('equals sendId')
-  // }
-
   var isForOutbound
   if (this._outbound) {
     isForOutbound = (
       packet.connection === this._outbound._recvId ||
+      // see rationale in server.receive
       (packet.id === PACKET_RESET && packet.connection === this._outbound._sendId)
     )
   }
@@ -710,17 +701,15 @@ SymmetricClient.prototype.send = function (message, ondelivered) {
   var self = this
   ondelivered = ondelivered || noop
 
-  this._queue.push([message, ondelivered])
+  this._pending.push([message, ondelivered])
   if (!this._outbound) {
     this._createOutboundConnection()
   }
 
-  this._outbound.send(message, wrapper)
-
-  function wrapper (err) {
+  this._outbound.send(message, function (err) {
     if (self._closed) return
 
-    self._queue.shift()
+    self._pending.shift()
     if (err) {
       // requeue
       process.nextTick(function () {
@@ -729,7 +718,7 @@ SymmetricClient.prototype.send = function (message, ondelivered) {
     } else {
       ondelivered(err)
     }
-  }
+  })
 }
 
 SymmetricClient.prototype.close =
@@ -739,7 +728,7 @@ SymmetricClient.prototype.destroy = function () {
   this._debug('closing')
   this._closed = true
   this._inbound.close()
-  if (this._outbound) {
+  if (this._dedicatedOutbound) {
     this._outbound.close()
   }
 }
@@ -790,7 +779,6 @@ SymmetricClient.prototype._debug = function () {
   args.unshift('manager')
   return debug(args.join(' '))
 }
-
 
 exports = module.exports = SymmetricClient
 exports.Connection = Connection
