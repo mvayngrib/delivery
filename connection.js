@@ -616,7 +616,7 @@ Server.prototype.connections = function () {
 
 function SymmetricClient (opts) {
   EventEmitter.call(this)
-  this._opts = opts
+  this._opts = opts || {}
   this._reset()
 }
 
@@ -643,6 +643,9 @@ SymmetricClient.prototype._reset = function (resend) {
     this._resendPending()
   } else {
     this._pending = []
+    if (this._opts.autoConnect !== false) {
+      this._createOutboundConnection()
+    }
   }
 }
 
@@ -701,11 +704,20 @@ SymmetricClient.prototype.send = function (message, ondelivered) {
   var self = this
   ondelivered = ondelivered || noop
 
-  this._pending.push([message, ondelivered])
   if (!this._outbound) {
-    this._createOutboundConnection()
+    // TODO: reuse inbound connection, if exists
+    // get freshest connection
+    // this._outbound = this._inbound.connections().sort(decreasingFreshness)[0]
+    // if (this._outbound) {
+    //   this._dedicatedOutbound = false
+    //   reemit(this._outbound, this, ['timeout', 'pause', 'resume'])
+    //   this._debug('reusing existing inbound connection for outbound')
+    // } else {
+      this._createOutboundConnection()
+    // }
   }
 
+  this._pending.push([message, ondelivered])
   this._outbound.send(message, function (err) {
     if (self._closed) return
 
@@ -790,6 +802,10 @@ exports.bufferToPacket = bufferToPacket
 
 function call (fn) {
   fn()
+}
+
+function decreasingFreshness (a, b) {
+  return a.idleTime() - b.idleTime()
 }
 
 // function oneTickClose (emitter, cb) {
