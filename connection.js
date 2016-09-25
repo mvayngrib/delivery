@@ -597,14 +597,20 @@ Server.prototype.destroy = function () {
     conns[id].close()
   }
 
-  debug('closing server')
+  this._debug('closing')
   this.emit('close')
 }
 
 Server.prototype.setTimeout = function (millis) {
   this._timeoutMillis = millis
-  Object.keys(this._connections).forEach(function (id) {
-    this._connections[id].setTimeout(millis)
+  this.connections().forEach(function (c) {
+    c.setTimeout(millis)
+  }, this)
+}
+
+Server.prototype.connections = function () {
+  return Object.keys(this._connections).map(function (cid) {
+    return this._connections[cid]
   }, this)
 }
 
@@ -620,7 +626,7 @@ SymmetricClient.prototype._reset = function (resend) {
   var q = resend && this._queue && this._queue.slice()
   var inbound = this._inbound
   if (inbound) {
-    debug('resetting symmetric client')
+    this._debug('resetting symmetric client')
     inbound.close()
     inbound.removeAllListeners()
   }
@@ -730,7 +736,7 @@ SymmetricClient.prototype.close =
 SymmetricClient.prototype.destroy = function () {
   if (this._closed) return
 
-  debug('closing symmetric client')
+  this._debug('closing')
   this._closed = true
   this._inbound.close()
   if (this._outbound) {
@@ -778,6 +784,13 @@ SymmetricClient.prototype.outboundConnection = function () {
 SymmetricClient.prototype.inboundConnections = function () {
   return this._inbound.connections()
 }
+
+SymmetricClient.prototype._debug = function () {
+  var args = [].slice.call(arguments)
+  args.unshift('manager')
+  return debug(args.join(' '))
+}
+
 
 exports = module.exports = SymmetricClient
 exports.Connection = Connection
