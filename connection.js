@@ -387,6 +387,9 @@ Connection.prototype._recvAck = function (ack) {
 
   if (!this._inflightPackets) {
     this.emit('flush')
+  } else {
+    // this._writable() may now be true
+    this._flush()
   }
 }
 
@@ -763,7 +766,9 @@ SymmetricClient.prototype.resume = function () {
 }
 
 SymmetricClient.prototype.isPaused = function () {
-  return this._outbound.isPaused()
+  if (this._outbound) {
+    return this._outbound.isPaused()
+  }
 }
 
 SymmetricClient.prototype.outboundConnection = function () {
