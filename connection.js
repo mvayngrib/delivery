@@ -120,13 +120,14 @@ var noop = function () {}
 var CID = 0
 var CONNECTIONS = {}
 
-function Connection (options, syn) {
+function Connection (opts) {
   var self = this
-  options = options || {}
+  opts = opts || {}
 
-  this._mtu = options.mtu || MTU
-  var resendInterval = options.resendInterval || RESEND_INTERVAL
-  var keepAliveInterval = options.keepAliveInterval || KEEP_ALIVE_INTERVAL
+  this._opts = opts
+  this._mtu = opts.mtu || MTU
+  var resendInterval = opts.resendInterval || RESEND_INTERVAL
+  // var keepAliveInterval = opts.keepAliveInterval || KEEP_ALIVE_INTERVAL
 
   EventEmitter.call(this)
 
@@ -140,15 +141,16 @@ function Connection (options, syn) {
   this._incoming = cyclist(BUFFER_SIZE)
 
   this._inflightPackets = 0
-  this._alive = false
+  // this._alive = false
 
   var resend = setInterval(this._resend.bind(this), resendInterval)
-  var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInterval)
+  // var keepAlive = setInterval(this._keepAlive.bind(this), keepAliveInterval)
+  this._keepAlive = this._keepAlive.bind(this)
 
   this.once('close', function () {
     self._debug('closed')
     clearInterval(resend)
-    clearInterval(keepAlive)
+    // clearInterval(keepAlive)
     self.clearTimeout()
     self._cancelPending()
     delete CONNECTIONS[self._id]
@@ -167,24 +169,6 @@ function Connection (options, syn) {
     }
   })
 
-  this._initiator = !syn
-  if (this._initiator) {
-    this._connecting = true
-    this._recvId = nonRepeatRandom()
-    this._sendId = uint16(this._recvId + 1)
-    this._seq = (Math.random() * UINT16) | 0
-    this._ack = 0
-    this._sendOutgoing(createPacket(this, PACKET_SYN, null))
-  } else {
-    this._recvId = uint16(syn.connection+1)
-    this._sendId = syn.connection
-    this._seq = (Math.random() * UINT16) | 0
-    this._ack = syn.seq
-    this._sendAck()
-    this._onconnected()
-  }
-
-  this._debug('created new ' + (this._initiator ? 'outbound' : 'inbound') + ' connection')
 }
 
 Connection.MTU = MTU
@@ -209,23 +193,17 @@ Connection.prototype.setTimeout = function(millis, cb) {
   if (!millis) return
 
   this._idleTimeoutMillis = millis
-  // if (this._connecting) {
-  //   return this.once('connect', this.setTimeout.bind(this, millis, cb))
-  // }
-
   this._idleTimeout = setTimeout(function () {
+    var now = Date.now()
+    self._debug('timed out after ' + self.idleTime() + 'ms')
     if (self.listenerCount('timeout')) {
       self.emit('timeout', millis)
     } else {
-      self._debug('timed out')
       self.close()
     }
   }, millis)
 
-  if (this._idleTimeout.unref) {
-    this._idleTimeout.unref()
-  }
-
+  unref(this._idleTimeout)
   if (cb) this.once('timeout', cb)
 }
 
@@ -241,6 +219,7 @@ Connection.prototype.destroy = function () {
 
   this._debug('closing')
   this.clearTimeout()
+  clearTimeout(this._keepAliveTimeout)
   this._closed = true
   this.emit('close')
 }
@@ -248,6 +227,7 @@ Connection.prototype.destroy = function () {
 Connection.prototype.send = function (data, ondelivered) {
   var self = this
   if (this._closed) return
+  if (this._initiator !== false) this.connect()
 
   this.resume()
 
@@ -361,8 +341,7 @@ Connection.prototype._resend = function () {
 }
 
 Connection.prototype._keepAlive = function () {
-  if (this._paused) return
-  if (this._alive) return this._alive = false
+  // this._debug('sending keep-alive')
   this._sendAck()
 }
 
@@ -413,8 +392,8 @@ Connection.prototype._cancelPending = function (err) {
 }
 
 Connection.prototype._resetTimeout = function () {
-  this._lastReceivedTimestamp = Date.now()
   if ('_idleTimeout' in this) {
+    // this._debug('resetting timeout')
     this.setTimeout(this._idleTimeoutMillis)
   }
 }
@@ -423,7 +402,20 @@ Connection.prototype.idleTime = function () {
   return Date.now() - (this._lastReceivedTimestamp || 0)
 }
 
+Connection.prototype.connect = function () {
+  if (this._initiator) return
+
+  this._initiator = true
+  this._connecting = true
+  this._recvId = nonRepeatRandom()
+  this._sendId = uint16(this._recvId + 1)
+  this._seq = (Math.random() * UINT16) | 0
+  this._ack = 0
+  this._sendOutgoing(createPacket(this, PACKET_SYN, null))
+}
+
 Connection.prototype.receive = function (packet) {
+  this._lastReceivedTimestamp = Date.now()
   this._resetTimeout()
   // this._debug('received ' + packetType(packet), ', connection:', packet.connection)
   if (packet.id === PACKET_SYN) {
@@ -431,8 +423,14 @@ Connection.prototype.receive = function (packet) {
       return this._transmit(createPacket(this, PACKET_RESET))
     }
 
+    this._initiator = false
+    this._recvId = uint16(packet.connection+1)
+    this._sendId = packet.connection
+    this._seq = (Math.random() * UINT16) | 0
+    this._ack = packet.seq
     this._sendAck()
-    return;
+    this._onconnected()
+    return
   }
 
   if (packet.id === PACKET_RESET) {
@@ -501,6 +499,10 @@ Connection.prototype._transmit = function (packet) {
   this._alive = true
   // this._debug('sending ' + packetType(packet), 'seq:', packet.seq, ', ack:', packet.ack, ', connection:', packet.connection)
   this.emit('send', message)
+
+  clearTimeout(this._keepAliveTimeout)
+  this._keepAliveTimeout = setTimeout(this._keepAlive, this._opts.keepAliveInterval || KEEP_ALIVE_INTERVAL)
+  unref(this._keepAliveTimeout)
 }
 
 Connection.prototype.pause = function () {
@@ -537,6 +539,7 @@ Server.prototype.receive = function (message) {
     return
   }
 
+  // this._debug('received ' + packetType(packet), ', connection:', packet.connection, Object.keys(this._connections))
   var connections = this._connections
   var id = packet.id === PACKET_SYN ? uint16(packet.connection+1) : packet.connection
   var conn = connections[id]
@@ -563,6 +566,7 @@ Server.prototype.receive = function (message) {
   }
 
   conn = connections[id] = new Connection(this._opts, packet)
+  this._debug('created new inbound connection')
   if (this._timeoutMillis) {
     conn.setTimeout(this._timeoutMillis)
   }
@@ -573,6 +577,7 @@ Server.prototype.receive = function (message) {
 
   this.emit('connection', conn)
   reemit(conn, this, ['send', 'receive'])
+  conn.receive(packet)
 }
 
 Server.prototype._debug = function () {
@@ -672,6 +677,8 @@ SymmetricClient.prototype._createOutboundConnection = function () {
   // TODO: reuse existing inbound connection if possible
 
   this._outbound = new Connection(this._opts)
+  this._debug('created new outbound connection')
+
   this._outbound.once('close', function () {
     if (self._closed) return
 
@@ -686,10 +693,17 @@ SymmetricClient.prototype._createOutboundConnection = function () {
   if (this._timeoutMillis) {
     this._outbound.setTimeout(this._timeoutMillis)
   }
+
+  process.nextTick(function () {
+    if (!self._closed) {
+      self._outbound.connect()
+    }
+  })
 }
 
 SymmetricClient.prototype.receive = function (message) {
   var packet = bufferToPacket(message)
+  // this._debug('received ' + packetType(packet), ', connection:', packet.connection)
   var isForOutbound
   if (this._outbound) {
     isForOutbound = (
@@ -812,6 +826,10 @@ function call (fn) {
 
 function decreasingFreshness (a, b) {
   return a.idleTime() - b.idleTime()
+}
+
+function unref (obj) {
+  if (obj.unref) obj.unref()
 }
 
 // function oneTickClose (emitter, cb) {

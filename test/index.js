@@ -23,10 +23,7 @@ test('disconnect', function (t) {
   var b = new Connection()
   b._id = 'b'
 
-  createFaultyConnection(a, b, function () {
-    // good connection
-    return true
-  })
+  createGoodConnection(a, b)
 
   // var dialogue = {
   //   a: {
@@ -184,6 +181,25 @@ test('timeout', function (t) {
       b.destroy()
       t.end()
     }, 1000)
+  }, 2000)
+})
+
+test('don\'t timeout', function (t) {
+  var a = new Connection({ keepAliveInterval: 100 })
+  var b = new Connection({ keepAliveInterval: 100 })
+
+  a.setTimeout(200)
+  b.setTimeout(200)
+  a.on('timeout', t.fail)
+  b.on('timeout', t.fail)
+  createGoodConnection(a, b)
+  a.send('hey')
+  b.send('ho')
+
+  setTimeout(function () {
+    a.destroy()
+    b.destroy()
+    t.end()
   }, 2000)
 })
 
@@ -702,6 +718,13 @@ function createFaultyConnection (a, b, filter) {
         }
       })
     })
+  })
+}
+
+function createGoodConnection (a, b) {
+  createFaultyConnection(a, b, function () {
+    // good connection
+    return true
   })
 }
 
