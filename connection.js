@@ -592,10 +592,9 @@ Server.prototype.destroy = function () {
   if (this._closed) return
 
   this._closed = true
-  var conns = this._connections
-  for (var id in this._connections) {
-    conns[id].close()
-  }
+  this.connections().forEach(function (c) {
+    c.close()
+  })
 
   this._debug('closing')
   this.emit('close')
@@ -603,9 +602,16 @@ Server.prototype.destroy = function () {
 
 Server.prototype.setTimeout = function (millis) {
   this._timeoutMillis = millis
-  this.connections().forEach(function (c) {
-    c.setTimeout(millis)
-  }, this)
+  for (var id in this._connections) {
+    this._connections[id].setTimeout(millis)
+  }
+}
+
+Server.prototype.clearTimeout = function () {
+  delete this._timeoutMillis
+  for (var id in this._connections) {
+    this._connections[id].clearTimeout()
+  }
 }
 
 Server.prototype.connections = function () {
