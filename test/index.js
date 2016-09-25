@@ -254,7 +254,7 @@ test('length-prefixed transport', function (t) {
   }
 })
 
-test('basic', function (t) {
+test.only('basic', function (t) {
   console.log('this tests recovery when more than half the packets\n' +
     'are dropped so give it ~30 seconds to complete')
 
@@ -285,14 +285,14 @@ test('basic', function (t) {
     })
   })
 
-  process.nextTick(function () {
+  setTimeout(function () {
     bToA.forEach(msg => {
       b.send(msg, () => {
         t.pass('b delivered')
         finish()
       })
     })
-  })
+  }, 500)
 
   a.on('receive', msg => {
     msg = msg.toString()

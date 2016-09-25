@@ -419,7 +419,7 @@ Connection.prototype._resetTimeout = function () {
   }
 }
 
-Connection.prototype._millisSinceLastReceived = function () {
+Connection.prototype.idleTime = function () {
   return Date.now() - (this._lastReceivedTimestamp || 0)
 }
 
@@ -597,14 +597,20 @@ Server.prototype.destroy = function () {
     conns[id].close()
   }
 
-  debug('closing server')
+  this._debug('closing')
   this.emit('close')
 }
 
 Server.prototype.setTimeout = function (millis) {
   this._timeoutMillis = millis
-  Object.keys(this._connections).forEach(function (id) {
-    this._connections[id].setTimeout(millis)
+  this.connections().forEach(function (c) {
+    c.setTimeout(millis)
+  }, this)
+}
+
+Server.prototype.connections = function () {
+  return Object.keys(this._connections).map(function (cid) {
+    return this._connections[cid]
   }, this)
 }
 
@@ -620,7 +626,7 @@ SymmetricClient.prototype._reset = function (resend) {
   var q = resend && this._queue && this._queue.slice()
   var inbound = this._inbound
   if (inbound) {
-    debug('resetting symmetric client')
+    this._debug('resetting symmetric client')
     inbound.close()
     inbound.removeAllListeners()
   }
@@ -661,12 +667,14 @@ SymmetricClient.prototype._reset = function (resend) {
 
 SymmetricClient.prototype._createOutboundConnection = function () {
   var self = this
+
+  this._dedicatedOutbound = true
   this._outbound = new Connection(this._opts)
-  this._outbound.once('close', function () {
-    if (!self._closed) {
-      self._createOutboundConnection()
-    }
-  })
+  // this._outbound.once('close', function () {
+  //   if (!self._closed) {
+  //     self._createOutboundConnection()
+  //   }
+  // })
 
   reemit(this._outbound, this, ['send', 'receive', 'timeout', 'pause', 'resume'])
   if (this._timeoutMillis) {
@@ -706,7 +714,15 @@ SymmetricClient.prototype.send = function (message, ondelivered) {
 
   this._queue.push([message, ondelivered])
   if (!this._outbound) {
-    this._createOutboundConnection()
+    // get freshest connection
+    this._outbound = this._inbound.connections().sort(decreasingFreshness)[0]
+    if (!this._outbound) {
+      this._createOutboundConnection()
+    } else {
+      this._dedicatedOutbound = false
+      reemit(this._outbound, this, ['timeout', 'pause', 'resume'])
+      this._debug('reusing existing inbound connection for outbound')
+    }
   }
 
   this._outbound.send(message, wrapper)
@@ -730,10 +746,10 @@ SymmetricClient.prototype.close =
 SymmetricClient.prototype.destroy = function () {
   if (this._closed) return
 
-  debug('closing symmetric client')
+  this._debug('closing symmetric client')
   this._closed = true
   this._inbound.close()
-  if (this._outbound) {
+  if (this._dedicatedOutbound) {
     this._outbound.close()
   }
 }
@@ -779,6 +795,12 @@ SymmetricClient.prototype.inboundConnections = function () {
   return this._inbound.connections()
 }
 
+SymmetricClient.prototype._debug = function () {
+  var args = [].slice.call(arguments)
+  args.unshift('manager')
+  return debug(args.join(' '))
+}
+
 exports = module.exports = SymmetricClient
 exports.Connection = Connection
 exports.Server = Server
@@ -807,3 +829,7 @@ function call (fn) {
 
 //   return true
 // }
+
+function decreasingFreshness (a, b) {
+  return a.idleTime() - b.idleTime()
+}
