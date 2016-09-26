@@ -175,6 +175,8 @@ Connection.MTU = MTU
 util.inherits(Connection, EventEmitter)
 
 Connection.prototype._onconnected = function () {
+  if (!this._connecting) return
+
   this._debug('connected')
   this._connecting = false
   this.emit('connect')
@@ -238,6 +240,7 @@ Connection.prototype.send = function (data, ondelivered) {
   var bytesQueued = this._backedUp + data.length
   var packetsTogo = Math.ceil(bytesQueued / this._mtu)
   this._putDeliveryCallback(packetsTogo, function (err) {
+    if (!err) self._debug('delivered message!')
     var args = self._msgQueue.shift()
     if (args && args[1]) args[1](err)
   })
@@ -566,7 +569,7 @@ Server.prototype.receive = function (message) {
   }
 
   conn = connections[id] = new Connection(this._opts, packet)
-  this._debug('created new inbound connection')
+  this._debug('created new inbound connection ' + conn._id)
   if (this._timeoutMillis) {
     conn.setTimeout(this._timeoutMillis)
   }
@@ -677,7 +680,7 @@ SymmetricClient.prototype._createOutboundConnection = function () {
   // TODO: reuse existing inbound connection if possible
 
   this._outbound = new Connection(this._opts)
-  this._debug('created new outbound connection')
+  this._debug('created new outbound connection ' + this._outbound._id)
 
   this._outbound.once('close', function () {
     if (self._closed) return
