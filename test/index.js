@@ -697,6 +697,26 @@ test('switchboard disconnect', function (t) {
   // }
 })
 
+test('large message', function (t) {
+  var a = new Connection({ keepAlive: 300, mtu: 10000 })
+  a._id = 'a'
+  var b = new Connection({ keepAlive: 300, mtu: 10000 })
+  b._id = 'b'
+
+  createFaultyConnection(a, b, function () {
+    return Math.random() > 0.1 // decent connection
+  }, 200)
+
+  a.setTimeout(1000)
+  b.setTimeout(1000)
+  a.send('sixmeg'.repeat(1000000), () => {
+    t.pass('a delivered')
+    t.end()
+    a.destroy()
+    b.destroy()
+  })
+})
+
 // test('ensure close', function (t) {
 //   t.end()
 //   setTimeout(function () {
@@ -706,17 +726,17 @@ test('switchboard disconnect', function (t) {
 
 // setInterval(WHY, 10000).unref()
 
-function createFaultyConnection (a, b, filter) {
+function createFaultyConnection (a, b, filter, delay) {
   ;[a, b].forEach(me => {
     other = me === a ? b : a
     other.on('send', function (msg) {
       if (!filter(msg)) return
 
-      process.nextTick(() => {
+      setTimeout(() => {
         if (!me.isPaused()) {
           me.receive(msg)
         }
-      })
+      }, delay || 0)
     })
   })
 }

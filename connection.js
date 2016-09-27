@@ -45,6 +45,7 @@ var timestamp = function () {
 
   return function () {
     var diff = hrtime(offset)
+    // microseconds
     return uint32(then + 1000000 * diff[0] + ((diff[1] / 1000) | 0))
   }
 }()
@@ -127,6 +128,7 @@ function Connection (opts) {
   this._opts = opts
   this._mtu = opts.mtu || MTU
   var resendInterval = opts.resendInterval || RESEND_INTERVAL
+  this._resendTimeoutMicroseconds = resendInterval * 1000
   // var keepAliveInterval = opts.keepAliveInterval || KEEP_ALIVE_INTERVAL
 
   EventEmitter.call(this)
@@ -169,6 +171,8 @@ function Connection (opts) {
     }
   })
 
+  // not true, but makes idleTime() more sane
+  this._lastReceivedTimestamp = Date.now()
 }
 
 Connection.MTU = MTU
@@ -320,10 +324,6 @@ Connection.prototype._payload = function (data) {
   return data
 }
 
-// Connection.prototype._countRequiredPackets = function (data) {
-//   return Math.ceil(data.length / this._mtu)
-// }
-
 Connection.prototype._resend = function () {
   if (this._paused || !this._inflightPackets) return
 
@@ -331,15 +331,14 @@ Connection.prototype._resend = function () {
   var first = this._outgoing.get(offset)
   if (!first) return
 
-  var timeout = 500000
+  var timeout = this._resendTimeoutMicroseconds / 2
   var now = timestamp()
-
-  if (uint32(first.sent - now) < timeout) return
+  if (uint32(now - first.sent) < timeout) return
 
   for (var i = 0; i < this._inflightPackets; i++) {
     var packet = this._outgoing.get(offset + i)
     // this._debug('resending ' + packetType(packet))
-    if (uint32(packet.sent - now) >= timeout) this._transmit(packet)
+    if (uint32(now - packet.sent) >= timeout) this._transmit(packet)
   }
 }
 
