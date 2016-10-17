@@ -107,14 +107,8 @@ var createPacket = function (connection, id, data) {
   }
 }
 
-var nonRepeatRandom = function () {
-  var rand
-  do {
-    rand = Math.random() * UINT16 | 0
-  } while (RECV_IDS.get(rand))
-
-  RECV_IDS.set(rand, 1)
-  return rand
+var nextConnectionId = function () {
+  return Math.random() * UINT16 | 0
 }
 
 var noop = function () {}
@@ -409,7 +403,7 @@ Connection.prototype.connect = function () {
 
   this._initiator = true
   this._connecting = true
-  this._recvId = nonRepeatRandom()
+  this._recvId = nextConnectionId()
   this._sendId = uint16(this._recvId + 1)
   this._seq = (Math.random() * UINT16) | 0
   this._ack = 0
