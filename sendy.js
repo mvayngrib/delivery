@@ -2,12 +2,13 @@ var EventEmitter = require('events').EventEmitter
 var util = require('util')
 var varint = require('varint')
 var lps = require('length-prefixed-stream')
-var debug = require('debug')('sendy-messenger')
+var debug = require('debug')('sendy:messenger')
 var once = require('once')
 var utils = require('./utils')
 var Symmetric = require('./connection')
 var UINT32 = 0xffffffff
 var COUNT_PROP = '_sendyCount'
+var ID = 0
 
 function LengthPrefixed (opts) {
   var self = this
@@ -19,13 +20,14 @@ function LengthPrefixed (opts) {
   this._client = opts.client || new Symmetric(opts)
   utils.connect(this, this._client)
 
+  this._id = opts.name || ID++
   this._client.once('destroy', function () {
     self._destroyed = true
     self._client = null
   })
 
   this._client.on('reset', function () {
-    debug('reset length-prefixed decoder')
+    self._debug('reset length-prefixed decoder')
     self._resetDecoder()
   })
 
@@ -43,6 +45,14 @@ function LengthPrefixed (opts) {
 
 util.inherits(LengthPrefixed, EventEmitter)
 exports = module.exports = LengthPrefixed
+
+LengthPrefixed.prototype._debug = function () {
+  if (debug.enabled) {
+    var args = [].slice.call(arguments)
+    args.unshift(this._id)
+    return debug.apply(null, args)
+  }
+}
 
 LengthPrefixed.prototype._resetDecoder = function () {
   if (this._decoder) {

@@ -1,7 +1,10 @@
 var cyclist = require('cyclist')
 var util = require('util')
 var EventEmitter = require('events').EventEmitter
-var debug = require('debug')('sendy')
+var debugConnection = require('debug')('sendy:cxn')
+var debugServer = require('debug')('sendy:server')
+var debugClient = require('debug')('sendy:client')
+var debugSymmetric = require('debug')('sendy:symmetric')
 var reemit = require('re-emitter')
 var BitArray = require('./bit-array')
 var utils = require('./utils')
@@ -113,6 +116,8 @@ var nextConnectionId = function () {
 
 var noop = function () {}
 var CID = 0
+var SID = 0
+var MID = 0
 var CONNECTIONS = {}
 
 function Connection (opts) {
@@ -128,7 +133,7 @@ function Connection (opts) {
   EventEmitter.call(this)
 
   this.setMaxListeners(0)
-  this._id = CID++
+  this._id = opts.name || CID++
   this._paused = false
   this._msgQueue = []
   this._writeBuffer = []
@@ -181,9 +186,11 @@ Connection.prototype._onconnected = function () {
 }
 
 Connection.prototype._debug = function () {
-  var args = [].slice.call(arguments)
-  args.unshift('connection', this._id)
-  return debug(args.join(' '))
+  if (debugConnection.enabled) {
+    var args = [].slice.call(arguments)
+    args.unshift(this._id)
+    return debugConnection.apply(null, args)
+  }
 }
 
 Connection.prototype.setTimeout = function(millis, cb) {
@@ -331,13 +338,18 @@ Connection.prototype._resend = function () {
 
   for (var i = 0; i < this._inflightPackets; i++) {
     var packet = this._outgoing.get(offset + i)
-    // this._debug('resending ' + packetType(packet))
-    if (uint32(now - packet.sent) >= timeout) this._transmit(packet)
+    if (uint32(now - packet.sent) < timeout) continue
+
+    if (debugConnection.enabled) {
+      this._debug('resending ' + packetType(packet))
+    }
+
+    this._transmit(packet)
   }
 }
 
 Connection.prototype._keepAlive = function () {
-  // this._debug('sending keep-alive')
+  this._debug('sending keep-alive')
   this._sendAck()
 }
 
@@ -375,6 +387,7 @@ Connection.prototype._recvAck = function (ack) {
 
 Connection.prototype._cancelPending = function (err) {
   err = err || new Error('connection was reset')
+  this._debug('canceling pending', err)
   var cbArrays = this._deliveryCallbacks.values.slice()
   this._deliveryCallbacks = cyclist(BUFFER_SIZE)
 
@@ -389,7 +402,7 @@ Connection.prototype._cancelPending = function (err) {
 
 Connection.prototype._resetTimeout = function () {
   if ('_idleTimeout' in this) {
-    // this._debug('resetting timeout')
+    this._debug('resetting timeout')
     this.setTimeout(this._idleTimeoutMillis)
   }
 }
@@ -416,6 +429,7 @@ Connection.prototype.receive = function (packet) {
   // this._debug('received ' + packetType(packet), ', connection:', packet.connection)
   if (packet.id === PACKET_SYN) {
     if (this._initiator) {
+      this._debug('outbound connection, rejecting incoming SYN')
       return this._transmit(createPacket(this, PACKET_RESET))
     }
 
@@ -430,7 +444,7 @@ Connection.prototype.receive = function (packet) {
   }
 
   if (packet.id === PACKET_RESET) {
-    this._debug('received RESET')
+    this._debug('received RESET, closing')
     this.close()
     return
   }
@@ -522,7 +536,8 @@ function Server (opts) {
 
   EventEmitter.call(this)
   this._connections = {}
-  this._opts = opts
+  this._opts = opts || {}
+  this._id = this._opts.name || SID++
 }
 
 util.inherits(Server, EventEmitter)
@@ -561,7 +576,7 @@ Server.prototype.receive = function (message) {
     return
   }
 
-  conn = connections[id] = new Connection(this._opts, packet)
+  conn = connections[id] = new Connection(this._opts)
   this._debug('created new inbound connection ' + conn._id)
   if (this._timeoutMillis) {
     conn.setTimeout(this._timeoutMillis)
@@ -577,9 +592,11 @@ Server.prototype.receive = function (message) {
 }
 
 Server.prototype._debug = function () {
-  var args = [].slice.call(arguments)
-  args.unshift('server')
-  return debug(args.join(' '))
+  if (debugServer.enabled) {
+    var args = [].slice.call(arguments)
+    args.unshift(this._id)
+    return debugServer.apply(null, args)
+  }
 }
 
 // Server.prototype._reset = function (resend) {
@@ -624,6 +641,7 @@ Server.prototype.connections = function () {
 function SymmetricClient (opts) {
   EventEmitter.call(this)
   this._opts = opts || {}
+  this._id = this._opts.name || MID++
   this._reset()
 }
 
@@ -709,9 +727,12 @@ SymmetricClient.prototype.receive = function (message) {
     )
   }
 
+  var debug = debugSymmetric.enabled
   if (isForOutbound) {
+    if (debug) this._debug('receiving', packetType(packet), 'in outbound')
     this._outbound.receive(packet)
   } else {
+    if (debug) this._debug('receiving', packetType(packet), 'in inbound')
     this._inbound.receive(packet)
   }
 }
@@ -803,9 +824,11 @@ SymmetricClient.prototype.inboundConnections = function () {
 }
 
 SymmetricClient.prototype._debug = function () {
-  var args = [].slice.call(arguments)
-  args.unshift('manager')
-  return debug(args.join(' '))
+  if (debugSymmetric.enabled) {
+    var args = [].slice.call(arguments)
+    args.unshift(this._id)
+    return debugSymmetric.apply(null, args)
+  }
 }
 
 exports = module.exports = SymmetricClient

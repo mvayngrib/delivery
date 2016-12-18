@@ -5,15 +5,15 @@ var typeforce = require('typeforce')
 var extend = require('xtend/mutable')
 var bindAll = require('bindall')
 var once = require('once')
-var debug = require('debug')('sendy-switchboard')
+var debug = require('debug')('sendy:switchboard')
 var Sendy = require('./sendy')
 var noop = function () {}
 var nochange = function (data) {
   return data
 }
 
-var DEFAULT_CLIENT_MAKER = function () {
-  return new Sendy()
+var DEFAULT_CLIENT_MAKER = function (recipient) {
+  return new Sendy({ name: recipient })
 }
 
 function Switchboard (opts) {
