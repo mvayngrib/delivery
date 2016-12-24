@@ -55,23 +55,25 @@ function Switchboard (opts) {
     }
   })
 
-  this._uclient.on('disconnect', function () {
+  this._uclient.on('disconnect', function (id) {
     if (self._destroyed) return
 
-    for (var id in self._rclients) {
+    var ids = id ? [id] : Object.keys(self._rclients)
+    ids.forEach(function (id) {
       var rclient = self._rclients[id]
       self._updatePresence(id, false)
       if (rclient.pause) rclient.pause()
-    }
+    })
   })
 
-  this._uclient.on('connect', function () {
+  this._uclient.on('connect', function (id) {
     if (self._destroyed) return
 
-    for (var id in self._rclients) {
+    var ids = id ? [id] : Object.keys(self._rclients)
+    ids.forEach(function (id) {
       var rclient = self._rclients[id]
       if (rclient.resume) rclient.resume()
-    }
+    })
   })
 
   this._uclient.on('404', function (recipient) {
