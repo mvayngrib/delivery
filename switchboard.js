@@ -199,7 +199,7 @@ proto._getReliableClientFor = function (recipient) {
     if (self._destroyed) return
 
     self.emit('timeout', recipient)
-  }),
+  })
 
   rclient.on('receive', function (msg) {
     if (self._destroyed) return
@@ -207,7 +207,7 @@ proto._getReliableClientFor = function (recipient) {
     // emit message from whoever `recipient` is
     // debug('bubbling received msg from ' + recipient + ', length: ' + msg.length)
     self.emit('message', msg, recipient)
-  }),
+  })
 
   rclient.on('send', function (msg) {
     if (self._destroyed) {
@@ -218,7 +218,7 @@ proto._getReliableClientFor = function (recipient) {
     debug('sending msg to ' + recipient + ', length: ' + msg.length)
     msg = self._encode(msg, recipient)
     self._uclient.send(msg)
-  }),
+  })
 
   rclient.on('destroy', function (err) {
     // cleanup.forEach(call)
