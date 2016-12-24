@@ -38,6 +38,7 @@ function Switchboard (opts) {
   this._clientForRecipient = opts.clientForRecipient || DEFAULT_CLIENT_MAKER
   this._rclients = {}
   this._queued = {}
+  this._presence = {}
   this._sendTimeout = opts.sendTimeout
 
   this._uclient = opts.unreliable
@@ -45,6 +46,7 @@ function Switchboard (opts) {
     if (self._destroyed) return
 
     msg = self._decode(msg)
+    self._updatePresence(msg.from, true)
     var rclient = self._getReliableClientFor(msg.from)
     if (rclient) {
       // debug('received msg from ' + msg.from + ', length: ' + msg.data.length)
@@ -58,6 +60,7 @@ function Switchboard (opts) {
 
     for (var id in self._rclients) {
       var rclient = self._rclients[id]
+      self._updatePresence(id, false)
       if (rclient.pause) rclient.pause()
     }
   })
@@ -70,11 +73,22 @@ function Switchboard (opts) {
       if (rclient.resume) rclient.resume()
     }
   })
+
+  this._uclient.on('404', function (recipient) {
+    self._updatePresence(recipient, false)
+  })
 }
 
 util.inherits(Switchboard, EventEmitter)
 exports = module.exports = Switchboard
 var proto = Switchboard.prototype
+
+proto._updatePresence = function (recipient, present) {
+  if (present === !!this._presence[recipient]) return
+
+  this._presence[recipient] = present
+  this.emit('presence', recipient, present)
+}
 
 proto.send = function (recipient, msg, ondelivered) {
   var self = this
@@ -196,7 +210,10 @@ proto._getReliableClientFor = function (recipient) {
   }),
 
   rclient.on('send', function (msg) {
-    if (self._destroyed) return
+    if (self._destroyed) {
+      rclient.destroy()
+      return
+    }
 
     debug('sending msg to ' + recipient + ', length: ' + msg.length)
     msg = self._encode(msg, recipient)
