@@ -2,6 +2,7 @@ var EventEmitter = require('events').EventEmitter
 var util = require('util')
 var varint = require('varint')
 var lps = require('length-prefixed-stream')
+var reemit = require('re-emitter')
 var debug = require('debug')('sendy:messenger')
 var once = require('once')
 var utils = require('./utils')
@@ -61,6 +62,7 @@ LengthPrefixed.prototype._resetDecoder = function () {
 
   this._decoder = lps.decode()
   this._decoder.on('data', this._onDecoded)
+  reemit(this._decoder, this, ['progress'])
 }
 
 LengthPrefixed.prototype._onDecoded = function (data) {
